@@ -1,3 +1,21 @@
+/*
+ * ==========================================================================
+ * 认证流程处理 — 对应 UML 类图 (类图UML.txt)
+ * ==========================================================================
+ * 核心类映射:
+ *   LoginManager          → handleAuthRequest (login 分支)
+ *   RegistrationManager   → handleAuthRequest (register 分支)
+ *   EvaluatorLib           → (评估者资格校验)
+ *   LoginUI / RegistrationUI → AuthPanel 组件
+ *
+ * 流程:
+ *   注册: 用户提交信息 → RegistrationManager封装请求 → 查重检测 →
+ *         Supabase Auth创建账号 → 自动登录
+ *   登录: 用户提交凭证 → LoginManager格式校验 → Supabase Auth身份核验 →
+ *         读取用户资料 → 更新登录记录 → 返回登录态
+ * ==========================================================================
+ */
+
 import {
   readUserProfile,
   registerSupabaseUser,

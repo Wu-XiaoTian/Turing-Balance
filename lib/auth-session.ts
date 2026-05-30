@@ -1,3 +1,14 @@
+/*
+ * ==========================================================================
+ * 客户端会话管理 — 对应 UML 类图中的 LoginManager.sessionMap
+ * ==========================================================================
+ * 使用 localStorage 持久化 Auth Session，支持:
+ *   - readAuthSession: 读取当前登录态
+ *   - writeAuthSession: 写入登录态 (登录/注册成功后调用)
+ *   - clearAuthSession: 清除登录态 (登出时调用)
+ * ==========================================================================
+ */
+
 export interface AuthSessionUser {
   id: string;
   email: string | null;

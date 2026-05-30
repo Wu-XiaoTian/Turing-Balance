@@ -1,3 +1,19 @@
+/*
+ * ==========================================================================
+ * Supabase 数据访问层 — 对应 UML 类图中的数据层
+ * ==========================================================================
+ * 核心映射:
+ *   UserDatabase    → profiles 表 (readUserProfile, registerSupabaseUser...)
+ *   QuestionRepository → evaluation_questions 表 (readEvaluationQuestions)
+ *   ImperialConcubineDatabase → ai_candidates 表 (readAiCandidates)
+ *   SystemParameter → system_parameters 表 (readSystemParameters, upsertSystemParameter)
+ *
+ * 评估/匹配 Session 写入:
+ *   writeEvaluationSession → evaluation_tasks 表
+ *   writeMatchingSession    → matching_tasks 表
+ * ==========================================================================
+ */
+
 import { createClient } from '@supabase/supabase-js';
 import type { CandidateAI, EvaluationQuestion, EvaluationType, SystemParameter } from './types';
 

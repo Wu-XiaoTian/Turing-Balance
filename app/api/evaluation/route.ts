@@ -27,10 +27,11 @@ export async function GET(request: Request) {
     });
   }
 
-  // 模拟 AI 回答
+  // 调用真实 AI API 生成回答 (异步)
   if (action === 'ai-answer') {
     const questionId = url.searchParams.get('questionId') ?? '';
-    const response = generateAiResponse(questionId);
+    const prompt = url.searchParams.get('prompt') ?? '';
+    const response = await generateAiResponse(questionId, prompt);
     return Response.json({ ok: true, response });
   }
 

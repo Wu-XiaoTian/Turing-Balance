@@ -62,33 +62,13 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="section">
-        <h2 className="section-title">系统架构</h2>
-        <div className="panel stack">
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, textAlign: 'center' }}>
-            <div className="panel" style={{ padding: 16 }}>
-              <div style={{ fontSize: '2rem' }}>🎨</div>
-              <h4>表现层</h4>
-              <p className="muted" style={{ fontSize: '0.85rem' }}>登录界面<br/>评估界面<br/>匹配界面</p>
-            </div>
-            <div className="panel" style={{ padding: 16 }}>
-              <div style={{ fontSize: '2rem' }}>🎮</div>
-              <h4>控制层</h4>
-              <p className="muted" style={{ fontSize: '0.85rem' }}>登录管理<br/>评估服务<br/>匹配控制</p>
-            </div>
-            <div className="panel" style={{ padding: 16 }}>
-              <div style={{ fontSize: '2rem' }}>⚙️</div>
-              <h4>服务层</h4>
-              <p className="muted" style={{ fontSize: '0.85rem' }}>评估管理<br/>匹配管理<br/>画像构建</p>
-            </div>
-            <div className="panel" style={{ padding: 16 }}>
-              <div style={{ fontSize: '2rem' }}>💾</div>
-              <h4>数据层</h4>
-              <p className="muted" style={{ fontSize: '0.85rem' }}>评分引擎<br/>匹配引擎<br/>题库管理</p>
-            </div>
-          </div>
-        </div>
-      </section>
+{/*
+   * ========== 系统架构 (UML 类图对应) ==========
+   * 表现层: LoginUI, RegistrationUI, EvaluationUI, HuaQingUI
+   * 控制层: LoginManager, RegistrationManager, EvaluationServer, MatchingController
+   * 服务层: EvaluationManager, HuaQingManager, EvaluatorManager, ProfileBuilder, ReportGenerator
+   * 数据层: UserDatabase, QuestionRepository, AIModelEngine, ScoringEngine, MatchingEngine
+   */}
     </main>
   );
 }

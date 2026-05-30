@@ -1,3 +1,25 @@
+/*
+ * ==========================================================================
+ * 匹配引擎 — 对应 UML 活动图 & 顺序图
+ * ==========================================================================
+ * 父活动图 (HuaqingMatchingParentActivityUML.txt):
+ *   SubmitMatchRequest → ProcessMatchRequest → ObtainQuestionaryInformation →
+ *   ProvideQuestionnaire → SubmitAnswers → BuildUserProfile →
+ *   GetAIPartnerInformation → [匹配算法子活动] → ReturnMatchingReport
+ *
+ * 子活动图 (HuaqingMatchingChildActivityUML.txt):
+ *   ReceiveProfile → 并行计算兴趣/人格/情绪兼容度 →
+ *   AggregateScores → SortByTotal → ReturnResult
+ *
+ * 顺序图 (华清池AI伴侣匹配.txt):
+ *   User → MatchingController → ProfileBuilder → MatchingEngine →
+ *   UserQuestionaryDatabase → ImperialConcubineDatabase
+ *
+ * 状态图 (华清池AI伴侣匹配状态图UML.txt):
+ *   详见 types.ts 中的 MatchingStatus 状态机映射
+ * ==========================================================================
+ */
+
 import { aiCandidates, sampleMatchingAnswers } from './mock-data';
 import { readAiCandidates, readOrFallbackUserProfile, writeMatchingSession } from './supabase';
 import type {
