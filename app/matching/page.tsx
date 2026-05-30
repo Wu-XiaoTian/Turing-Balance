@@ -144,7 +144,7 @@ export default function MatchingPage() {
         <section className="page-head">
           <div>
             <h1>华清池 AI 伴侣匹配</h1>
-            <p>对应 UML 状态机: Idle → QuestionnairePending → Profiling → CandidateRetrieval → Matching → DeliveringResult → Completed</p>
+            <p>通过多维问卷分析，智能推荐最契合的 AI 伴侣</p>
           </div>
           <span className="chip">画像 / 兼容度 / 排序</span>
         </section>
@@ -177,11 +177,11 @@ export default function MatchingPage() {
               <div>
                 <h2>匹配流程</h2>
                 <ol className="muted">
-                  <li><strong>QuestionnairePending</strong> → 填写兴趣、人格、需求问卷</li>
-                  <li><strong>Profiling</strong> → 分析答案，构建用户画像</li>
-                  <li><strong>CandidateRetrieval</strong> → 从数据库中筛选候选 AI</li>
-                  <li><strong>Matching</strong> → 计算各维度的兼容度分数</li>
-                  <li><strong>DeliveringResult</strong> → 生成并返回匹配报告</li>
+                  <li><strong>填写问卷</strong> → 完成兴趣、人格、需求多维问卷</li>
+                  <li><strong>画像分析</strong> → 解析答案，构建您的专属偏好画像</li>
+                  <li><strong>候选筛选</strong> → 从 AI 库中检索符合条件的候选</li>
+                  <li><strong>智能匹配</strong> → 计算各维度的兼容度分数</li>
+                  <li><strong>结果推荐</strong> → 生成并展示排序后的匹配报告</li>
                 </ol>
               </div>
             </>
