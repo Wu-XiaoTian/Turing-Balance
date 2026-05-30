@@ -17,15 +17,18 @@ export async function POST(request: Request) {
   }
 
   const profile = await readUserProfile(result.data.user.id);
-  const lastLoginResult = await touchUserLastLogin(result.data.user.id);
 
-  if (lastLoginResult.error) {
-    return Response.json({ ok: false, message: lastLoginResult.error }, { status: 500 });
+  if (profile) {
+    const lastLoginResult = await touchUserLastLogin(result.data.user.id);
+
+    if (lastLoginResult.error) {
+      return Response.json({ ok: false, message: lastLoginResult.error }, { status: 500 });
+    }
   }
 
   return Response.json({
     ok: true,
-    mode: 'supabase',
+    mode: result.data.mode,
     user: {
       id: result.data.user.id,
       email: result.data.user.email,

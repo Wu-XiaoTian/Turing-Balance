@@ -6,9 +6,9 @@ import { writeAuthSession } from '@/lib/auth-session';
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [username, setUsername] = useState('user_a');
-  const [email, setEmail] = useState('demo@local.test');
-  const [password, setPassword] = useState('12345678');
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -107,7 +107,7 @@ export default function RegisterPage() {
           <h2>流程</h2>
           <ol className="muted">
             <li>用户提交用户名、邮箱和密码，邮箱可以是伪邮箱地址，不做验证。</li>
-            <li>系统进行格式校验与重复性检测。</li>
+            <li>系统进行重复性检测。</li>
             <li>通过后创建 Supabase Auth 用户，并写入 profiles 表。</li>
             <li>返回成功后自动写入浏览器登录态。</li>
           </ol>

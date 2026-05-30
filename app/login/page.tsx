@@ -6,8 +6,8 @@ import { writeAuthSession } from '@/lib/auth-session';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('demo@local.test');
-  const [password, setPassword] = useState('12345678');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -94,8 +94,7 @@ export default function LoginPage() {
           <h2>流程</h2>
           <ol className="muted">
             <li>用户提交邮箱与密码，邮箱可以是伪邮箱地址，不做格式验证。</li>
-            <li>LoginManager 先执行格式校验。</li>
-            <li>校验成功后调用 Supabase Auth 完成身份验证，再读取 profiles 表返回用户资料。</li>
+            <li>调用 Supabase Auth 完成身份验证，再读取 profiles 表返回用户资料。</li>
             <li>登录成功后更新 last_login_at 字段，并把当前登录态写入浏览器存储。</li>
           </ol>
         </div>
