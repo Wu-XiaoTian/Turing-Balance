@@ -1,3 +1,19 @@
+/*
+ * ==========================================================================
+ * 华清池 AI 伴侣匹配页面 — 对应 UML 类图: HuaQingUI
+ * ==========================================================================
+ * 核心流程 (对应 UML 活动图 HuaqingMatchingParentActivityUML.txt):
+ *   welcome → questionnaire → processing → result
+ *
+ * 匹配算法 (对应 UML 活动图 HuaqingMatchingChildActivityUML.txt):
+ *   并行计算兴趣/人格/情绪兼容度 → 聚合分数 → 排序 → 返回结果
+ *
+ * 状态机 (对应 UML 状态图 华清池AI伴侣匹配状态图UML.txt):
+ *   idle → questionnaire_pending → profiling → candidate_retrieval
+ *        → matching → delivering_result → completed
+ * ==========================================================================
+ */
+
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
@@ -174,16 +190,12 @@ export default function MatchingPage() {
                 </button>
               </div>
 
-              <div>
-                <h2>匹配流程</h2>
-                <ol className="muted">
-                  <li><strong>填写问卷</strong> → 完成兴趣、人格、需求多维问卷</li>
-                  <li><strong>画像分析</strong> → 解析答案，构建您的专属偏好画像</li>
-                  <li><strong>候选筛选</strong> → 从 AI 库中检索符合条件的候选</li>
-                  <li><strong>智能匹配</strong> → 计算各维度的兼容度分数</li>
-                  <li><strong>结果推荐</strong> → 生成并展示排序后的匹配报告</li>
-                </ol>
-              </div>
+{/*
+               * ========== 匹配流程 (对应 UML 活动图: HuaqingMatchingParentActivity) ==========
+               * 1. SubmitMatchRequest → ProcessMatchRequest → ObtainQuestionaryInformation → ProvideQuestionnaire
+               * 2. SubmitAnswers → ProcessAnswers → BuildUserProfile
+               * 3. GetAIPartnerInformation → ExecuteMatchingAlgorithm → ReturnMatchingReport
+               */}
             </>
           )}
         </section>
@@ -201,7 +213,7 @@ export default function MatchingPage() {
         <section className="page-head">
           <div>
             <h1>匹配问卷</h1>
-            <p>第 {currentQIndex + 1}/{matchingQuestionnaire.length} 题 · 对应 UML QuestionnairePending 状态</p>
+            <p>第 {currentQIndex + 1}/{matchingQuestionnaire.length} 题</p>
           </div>
           <span className="chip">{q.type === 'interests' ? '兴趣' : q.type === 'personality' ? '人格' : q.type === 'needs' ? '需求' : '开放题'}</span>
         </section>
@@ -309,7 +321,9 @@ export default function MatchingPage() {
         <section className="page-head">
           <div>
             <h1>正在匹配</h1>
-            <p>对应 UML: Profiling → CandidateRetrieval → Matching → DeliveringResult</p>
+{/*
+   * 对应 UML 状态图: Profiling → CandidateRetrieval → Matching → DeliveringResult
+   */}
           </div>
           <span className="chip">处理中...</span>
         </section>

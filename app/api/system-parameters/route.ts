@@ -1,3 +1,14 @@
+/*
+ * ==========================================================================
+ * 系统参数 API — 对应 UML 类图: SystemParameter / Administrator
+ * ==========================================================================
+ * Administrator "1" -- "*" SystemParameter : configure
+ * GET:  读取所有系统参数 (评估阈值、匹配权重、报告模板等)
+ * POST: 添加/更新参数 (管理员操作)
+ * DELETE: 删除指定参数 (管理员操作)
+ * ==========================================================================
+ */
+
 import { NextResponse } from 'next/server';
 import { readSystemParameters, upsertSystemParameter, readOrFallbackUserProfile } from '@/lib/supabase';
 

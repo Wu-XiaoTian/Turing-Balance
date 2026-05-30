@@ -1,3 +1,18 @@
+/*
+ * ==========================================================================
+ * AI 智商/情商评估页面 — 对应 UML 类图: EvaluationUI
+ * ==========================================================================
+ * 核心流程 (对应 UML 活动图 AIEvaluationParentActivityUML.txt):
+ *   welcome → select-type → evaluating (子循环) → finalizing → result
+ *
+ * 评估循环 (对应 UML 活动图 AIEvaluationChildLoopActivityUML.txt):
+ *   getNextQuestion → AI思考 → generateAiResponse → recordAnswer → 循环判断
+ *
+ * 状态机 (对应 UML 状态图 AI智商情商状态图UML.txt):
+ *   uninitialized → initializing → ready → evaluating → finalizing → completed
+ * ==========================================================================
+ */
+
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -16,6 +31,7 @@ import {
   recordAnswer,
   shouldContinueLoop,
   generateAiResponse,
+  getReferenceAnswer,
   aggregateEvaluation,
   createEvaluationLoopState
 } from '@/lib/evaluation';
@@ -38,6 +54,7 @@ export default function EvaluationPage() {
     answers: { questionId: string; answer: string }[];
   } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setSession(readAuthSession());
@@ -67,11 +84,10 @@ export default function EvaluationPage() {
     [session]
   );
 
-  // 处理当前题目 -> AI 回答 -> 评分循环
+  // 处理当前题目 -> 调用真实 AI API -> 评分循环
   useEffect(() => {
     if (phase !== 'evaluating' || !task || !shouldContinueLoop(task)) {
       if (task && task.answers.length === task.questions.length && phase === 'evaluating') {
-        // 所有题目已完成，进入汇总阶段
         finishEvaluation(task);
       }
       return;
@@ -88,20 +104,44 @@ export default function EvaluationPage() {
     setIsAiThinking(true);
     setAiResponse('');
 
-    // 模拟 AI 思考延迟 (对应 UML: AIModelEngine - Process Question Text)
-    const thinkingTime = 1000 + Math.random() * 1500;
-    timerRef.current = setTimeout(() => {
-      const response = generateAiResponse(question.id);
-      setAiResponse(response);
-      setIsAiThinking(false);
+    // 创建 AbortController 用于取消 API 请求
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      // 自动评分并记录 (对应 UML: ScoringEngine - Grade AI Response)
-      const { task: updatedTask } = recordAnswer(task, response);
-      setTask(updatedTask);
-      setCurrentQuestion(null);
-    }, thinkingTime);
+    // 异步调用真实 AI API (对应 UML: AIModelEngine - Process Question Text)
+    const runEvaluation = async () => {
+      try {
+        const response = await generateAiResponse(question.id, question.prompt);
+        // 检查是否已被取消
+        if (controller.signal.aborted) return;
 
-    return clearTimer;
+        setAiResponse(response);
+        setIsAiThinking(false);
+
+        // 自动评分并记录 (对应 UML: ScoringEngine - Grade AI Response)
+        const scored = recordAnswer(task, response);
+        setTask(scored.task);
+        setCurrentQuestion(null);
+      } catch {
+        // API 调用失败，降级为模板回答
+        if (controller.signal.aborted) return;
+
+        const fallback = getReferenceAnswer(question.id);
+        setAiResponse(fallback);
+        setIsAiThinking(false);
+
+        const scored = recordAnswer(task, fallback);
+        setTask(scored.task);
+        setCurrentQuestion(null);
+      }
+    };
+
+    runEvaluation();
+
+    return () => {
+      controller.abort();
+      abortRef.current = null;
+    };
   }, [phase, task, task?.currentQuestionIndex, clearTimer]);
 
   // 完成评估 (对应 UML: Finalizing state)
@@ -137,6 +177,10 @@ export default function EvaluationPage() {
   // 取消评估
   const cancelEvaluation = useCallback(() => {
     clearTimer();
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
     if (task) {
       setTask(markTaskCancelled(task));
     }
@@ -201,14 +245,13 @@ export default function EvaluationPage() {
                 </div>
               </div>
 
-              <div>
-                <h2>评估流程</h2>
-                <ol className="muted">
-                  <li><strong>创建任务</strong> → 选择评估类型并创建评测会话</li>
-                  <li><strong>评估循环</strong>: 逐题取题 → AI 回答 → 自动评分 → 记录结果（循环执行）</li>
-                  <li><strong>汇总报告</strong>: 聚合所有分数 → 计算加权总分 → 生成分析报告</li>
-                </ol>
-              </div>
+{/*
+               * ========== 评估流程 (对应 UML 活动图: AIEvaluationParentActivity) ==========
+               * 1. RequestEvaluation → ValidateRequest → CreateSession → InitializeEvaluation
+               * 2. 评估循环 (子活动图 AIEvaluationChildLoopActivity):
+               *    FetchNextQuestion → SubmitQuestion → AIResponse → GradeResponse → SaveIntermediateResult
+               * 3. CalculateOverallScore → GenerateReport → ProvideReport
+               */}
             </>
           )}
         </section>

@@ -1,3 +1,16 @@
+/*
+ * ==========================================================================
+ * 认证面板组件 — 对应 UML 类图: LoginUI / RegistrationUI
+ * ==========================================================================
+ * 对应关系:
+ *   LoginUI          → AuthPanel(mode='login')
+ *   RegistrationUI   → AuthPanel(mode='register')
+ *
+ * 登录流程: 用户提交邮箱+密码 → /api/auth → 写入 localStorage Session → 跳转
+ * 注册流程: 用户提交用户名+邮箱+密码 → /api/auth → 自动登录 → 跳转
+ * ==========================================================================
+ */
+
 "use client";
 
 import Link from 'next/link';
@@ -140,26 +153,11 @@ export function AuthPanel({ mode }: AuthPanelProps) {
           </Link>
         </div>
 
-        <div>
-          <h2>流程</h2>
-          <ol className="muted">
-            {isLogin ? (
-              <>
-                <li>用户提交邮箱与密码。</li>
-                <li>系统校验身份信息，完成安全验证。</li>
-                <li>读取用户资料并更新登录记录。</li>
-                <li>登录态保存，跳转到功能页面。</li>
-              </>
-            ) : (
-              <>
-                <li>用户提交用户名、邮箱和密码。</li>
-                <li>系统进行账号重复性检测。</li>
-                <li>通过后创建账号并保存用户资料。</li>
-                <li>返回成功后自动登录。</li>
-              </>
-            )}
-          </ol>
-        </div>
+{/*
+         * ========== 登录/注册流程 (对应 UML 类图: LoginManager, RegistrationManager) ==========
+         * 登录: 用户提交凭证 → LoginManager格式校验 → Supabase Auth身份核验 → 读取用户资料 → 更新登录记录
+         * 注册: 用户提交信息 → RegistrationManager封装请求 → 查重检测 → Supabase Auth创建账号 → 自动登录
+         */}
       </section>
     </main>
   );

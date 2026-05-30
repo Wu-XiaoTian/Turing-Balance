@@ -1,3 +1,31 @@
+/*
+ * ==========================================================================
+ * 类型定义 — 对应 UML 类图 (类图UML.txt)
+ * ==========================================================================
+ * 核心类映射:
+ *   User            → AppUser
+ *   Administrator   → Administrator
+ *   Evaluator       → Evaluator
+ *   EvaluationTask  → EvaluationTask / EvaluationReport
+ *   EvaluationQuestionnaire → EvaluationQuestion
+ *   AIUnderTest     → (external AI model)
+ *   CandidateAI     → CandidateAI
+ *   SystemParameter → SystemParameter
+ *
+ * 评估状态机 — 对应 UML 状态图 (AI智商情商状态图UML.txt):
+ *   Uninitialized → Initializing → Ready → Evaluating → Finalizing → Completed
+ *                                                                  → Cancelled
+ *                                                                  → Aborted
+ *
+ * 匹配状态机 — 对应 UML 状态图 (华清池AI伴侣匹配状态图UML.txt):
+ *   Idle → QuestionnairePending → Profiling → CandidateRetrieval
+ *        → Matching → DeliveringResult → Completed
+ *                                       → Cancelled
+ *                                       → Aborted
+ *                                       → MatchFailed
+ * ==========================================================================
+ */
+
 // ========== 评估类型 ==========
 export type EvaluationType = 'iq' | 'eq' | 'iq_eq';
 
