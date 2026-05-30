@@ -1,0 +1,52 @@
+@startuml
+title State Diagram - AI IQ/EQ Evaluation Task (EvaluationTask)
+
+[*] --> Uninitialized : Create new evaluation request
+
+Uninitialized --> Initializing : RequestEvaluation(UserID, EvaluationType)
+
+state Initializing {
+    [*] --> ValidatingUser
+    ValidatingUser --> CreatingSession : [User validation successful]
+    CreatingSession --> [*] : [Session(SessionID) generation complete]
+    ValidatingUser --> ValidationFailed : [Invalid user or invalid parameters]
+    ValidationFailed --> [*]
+}
+
+Initializing --> Ready : [Initialization successful]
+Initializing --> Aborted : [Initialization failed]
+
+Ready --> Evaluating : StartEvaluation(SessionID) [User clicks start]
+Ready --> Cancelled : Cancel() [User cancels]
+
+state Evaluating {
+    [*] --> FetchingQuestion
+    
+    FetchingQuestion --> WaitingForAI : [Question fetched successfully] / SubmitQuestion(QuestionData)
+    WaitingForAI --> GradingResponse : [AI response received] / GradeResponse(AIResponse)
+    GradingResponse --> SavingResult : [Single question grading complete] / SaveIntermediateResult()
+    
+    SavingResult --> FetchingQuestion : [Max questions not reached and no stop signal] / FetchNextQuestion()
+    SavingResult --> [*] : [Max questions reached OR stop signal received]
+    
+    FetchingQuestion --> EvaluationError : [Question DB connection failed/exhausted]
+    WaitingForAI --> EvaluationError : [AI model timeout/network error]
+}
+
+Evaluating --> Finalizing : [Normal completion] StopEvaluation() / End conditions met
+Evaluating --> Aborted : [Internal system error or interruption]
+
+state Finalizing {
+    [*] --> FetchingAllResults : FetchAllIntermediateResults()
+    FetchingAllResults --> AggregatingScores : AggregateScores()
+    AggregatingScores --> GeneratingReport : GenerateReport(OverallScore)
+    GeneratingReport --> [*] : [Report ready]
+}
+
+Finalizing --> Completed : ProvideEvaluationReport(EvaluationReport)
+
+Completed --> [*]
+Aborted --> [*]
+Cancelled --> [*]
+
+@enduml

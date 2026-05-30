@@ -1,0 +1,67 @@
+@startuml
+title AI IQ/EQ Evaluation Detailed Subsystem
+
+actor User
+participant "EvaluationController" as Controller <<Controller>>
+participant "QuestionRepository" as DB <<Database>>
+participant "AIModelEngine" as AI <<Subsystem>>
+participant "ScoringEngine" as Scorer <<Subsystem>>
+participant "ReportGenerator" as Reporter <<Subsystem>>
+
+== Initialization ==
+User -> Controller: RequestEvaluation(UserID, EvaluationType)
+activate Controller
+Controller -> Controller: ValidateRequest(UserID)
+Controller --> User: EvaluationSessionCreated(SessionID)
+
+User -> Controller: StartEvaluation(SessionID)
+
+== Evaluation Loop ==
+loop [Until Max Questions Reached OR User Stops]
+    ' Fetch Question
+    Controller -> DB: FetchNextQuestion(EvaluationType)
+    activate DB
+    DB --> Controller: QuestionData
+    deactivate DB
+
+    ' AI Answers Question
+    Controller -> AI: SubmitQuestion(QuestionData)
+    activate AI
+    AI --> Controller: AIResponse
+    deactivate AI
+
+    ' Evaluate Answer
+    Controller -> Scorer: GradeResponse(SessionID, QuestionData, AIResponse)
+    activate Scorer
+    Scorer -> DB: SaveIntermediateResult(SessionID, Score)
+    activate DB
+    DB --> Scorer: Success
+    deactivate DB
+    Scorer --> Controller: ResponseGraded
+    deactivate Scorer
+end
+
+== Finalization ==
+User -> Controller: StopEvaluation(SessionID)
+
+' Calculate Final Score
+Controller -> Scorer: CalculateOverallScore(SessionID)
+activate Scorer
+Scorer -> DB: FetchAllIntermediateResults(SessionID)
+activate DB
+DB --> Scorer: ResultDataSet
+deactivate DB
+Scorer -> Scorer: AggregateScores()
+Scorer --> Controller: OverallScore
+deactivate Scorer
+
+' Generate Report
+Controller -> Reporter: GenerateReport(UserID, EvaluationType, OverallScore)
+activate Reporter
+Reporter --> Controller: EvaluationReport
+deactivate Reporter
+
+' Return to User
+Controller --> User: ProvideEvaluationReport(EvaluationReport)
+deactivate Controller
+@enduml

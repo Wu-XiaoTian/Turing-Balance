@@ -1,0 +1,38 @@
+@startuml
+title Activity Diagram - AI IQ/EQ Evaluation Process (Parent)
+
+|User|
+start
+:Request Evaluation;
+
+|EvaluationController|
+:Validate Request;
+
+if (Is User Valid?) then ([Yes])
+    :Create Session;
+    |User|
+    :Click Start Evaluation;
+    |EvaluationController|
+    :Initialize Evaluation;
+    
+    ' This represents the Sub-Activity
+    :Execute Evaluation Loop (Sub-Activity) <
+    
+    |ScoringEngine|
+    :Calculate Overall Score;
+    
+    |ReportGenerator|
+    :Generate Evaluation Report;
+    
+    |EvaluationController|
+    :Provide Report to User;
+    
+    |User|
+    :View Evaluation Report;
+else ([No])
+    |EvaluationController|
+    :Reject Request & Show Error;
+endif
+
+stop
+@enduml
