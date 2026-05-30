@@ -36,7 +36,6 @@ export function AuthPanel({ mode }: AuthPanelProps) {
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<'email' | 'phone'>('email');
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -46,11 +45,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
     try {
       const body: Record<string, string> = { mode };
       if (isLogin) {
-        if (loginMethod === 'email') {
-          body.email = email;
-        } else {
-          body.phoneNumber = phoneNumber;
-        }
+        body.email = email;
         body.password = password;
       } else {
         body.username = username;
@@ -88,7 +83,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
 
   const title = isLogin ? '登录' : '注册';
   const description = isLogin
-    ? '对应 UML 中的 LoginManager、LoginUI 与 UserDatabase 交互流程。支持邮箱或手机号登录。'
+    ? '对应 UML 中的 LoginManager、LoginUI 与 UserDatabase 交互流程。使用邮箱登录。'
     : '对应 UML 中的 RegistrationManager、RegistrationUI 和 IDCardServer/重复性校验逻辑。';
   const chipLabel = isLogin ? '认证 / 校验 / 会话' : '注册 / 查重 / 入库';
   const alternateHref = isLogin ? '/auth?mode=register' : '/auth?mode=login';
@@ -113,48 +108,10 @@ export function AuthPanel({ mode }: AuthPanelProps) {
             </label>
           ) : null}
 
-          {/* 登录方式切换 */}
-          {isLogin && (
-            <div className="stats" style={{ marginBottom: 8 }}>
-              <button
-                type="button"
-                className={loginMethod === 'email' ? 'button' : 'button-ghost'}
-                onClick={() => setLoginMethod('email')}
-                style={{ flex: 1, fontSize: '0.85rem' }}
-              >
-                邮箱登录
-              </button>
-              <button
-                type="button"
-                className={loginMethod === 'phone' ? 'button' : 'button-ghost'}
-                onClick={() => setLoginMethod('phone')}
-                style={{ flex: 1, fontSize: '0.85rem' }}
-              >
-                手机号登录
-              </button>
-            </div>
-          )}
-
-          {isLogin && loginMethod === 'email' ? (
-            <label className="stack">
-              <span>邮箱地址</span>
-              <input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="example@mail.com" />
-            </label>
-          ) : null}
-
-          {isLogin && loginMethod === 'phone' ? (
-            <label className="stack">
-              <span>手机号码</span>
-              <input className="field" type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="13800138000" />
-            </label>
-          ) : null}
-
-          {!isLogin ? (
-            <label className="stack">
-              <span>邮箱地址</span>
-              <input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            </label>
-          ) : null}
+          <label className="stack">
+            <span>邮箱地址</span>
+            <input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="example@mail.com" required />
+          </label>
 
           <label className="stack">
             <span>密码</span>
@@ -188,7 +145,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
           <ol className="muted">
             {isLogin ? (
               <>
-                <li>用户提交邮箱/手机号与密码。</li>
+                <li>用户提交邮箱与密码。</li>
                 <li>LoginManager 校验格式后调用 Supabase Auth 完成身份验证。</li>
                 <li>读取 profiles 表返回用户资料，更新 last_login_at。</li>
                 <li>登录态写入浏览器存储，跳转到评估页。</li>

@@ -29,7 +29,6 @@ interface AuthRequestBody {
   mode?: AuthMode;
   username?: string;
   email?: string;
-  phoneNumber?: string;
   password?: string;
 }
 
@@ -87,17 +86,12 @@ export async function handleAuthRequest(request: Request, forcedMode?: AuthMode)
     } satisfies AuthResponsePayload);
   }
 
-  // 登录: 支持邮箱或手机号
-  const identifier = body.email || body.phoneNumber;
-  if (!identifier || !body.password) {
-    return Response.json({ ok: false, mode: 'supabase', message: '邮箱/手机号和密码不能为空。' }, { status: 400 });
+  // 登录: 仅支持邮箱
+  if (!body.email || !body.password) {
+    return Response.json({ ok: false, mode: 'supabase', message: '邮箱和密码不能为空。' }, { status: 400 });
   }
 
-  const loginInput = body.email
-    ? { email: body.email, password: body.password }
-    : { phone: body.phoneNumber!, password: body.password };
-
-  const result = await signInSupabaseUser(loginInput);
+  const result = await signInSupabaseUser({ email: body.email, password: body.password });
 
   if (result.error || !result.data?.user) {
     return Response.json({ ok: false, mode: 'supabase', message: result.error ?? '登录失败。' }, { status: 401 });
@@ -118,7 +112,6 @@ export async function handleAuthRequest(request: Request, forcedMode?: AuthMode)
     user: {
       id: result.data.user.id,
       email: result.data.user.email,
-      phoneNumber: result.data.user.phone ?? null,
       username: profile?.username ?? result.data.user.user_metadata?.username ?? null,
       role: profile?.role ?? 'user',
       lastLoginAt: profile?.last_login_at ?? null
