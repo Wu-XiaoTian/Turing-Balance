@@ -1,4 +1,5 @@
-import type { CandidateAI, EvaluationQuestion, EvaluationType } from './types';
+import { createClient } from '@supabase/supabase-js';
+import type { CandidateAI, EvaluationQuestion, EvaluationType, SystemParameter } from './types';
 
 type EnvMap = Record<string, string | undefined>;
 
@@ -16,6 +17,7 @@ export interface SupabaseProfile {
   id: string;
   username: string;
   email: string;
+  phone_number?: string;
   role: 'user' | 'evaluator' | 'administrator';
   created_at: string;
   updated_at: string;
@@ -25,6 +27,7 @@ export interface SupabaseProfile {
 export interface SupabaseSessionUser {
   id: string;
   email: string | null;
+  phone?: string | null;
   user_metadata?: {
     username?: string;
   };
@@ -41,6 +44,32 @@ export interface SupabaseAuthSession {
 export function hasSupabaseConfig() {
   return Boolean(supabaseUrl && supabaseAnonKey);
 }
+
+/** 创建 Supabase 浏览器客户端 (使用 anon key) */
+export function getSupabaseBrowserClient() {
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: true, autoRefreshToken: true }
+  });
+}
+
+/** 创建 Supabase 服务端客户端 (使用 anon key, 适合 Next.js Route Handler) */
+export function getSupabaseServerClient() {
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+}
+
+/** 创建 Supabase 管理员客户端 (使用 service role key) */
+export function getSupabaseAdminClient() {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return null;
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+}
+
+// ============ 遗留的 REST fetch 方法（保持向后兼容） ============
 
 function buildHeaders(apiKey: string, bearerToken?: string, returnRepresentation = false): HeadersInit {
   return {
@@ -71,19 +100,7 @@ export async function fetchJson<T>(path: string, init: RequestInit): Promise<{ d
   return { data: JSON.parse(text) as T, error: null };
 }
 
-export function getSupabaseBrowserClient() {
-  return null;
-}
-
-export function getSupabaseServerClient() {
-  return null;
-}
-
-export function getSupabaseAdminClient() {
-  return null;
-}
-
-export async function registerSupabaseUser(input: { username: string; email: string; password: string }) {
+export async function registerSupabaseUser(input: { username: string; email: string; password: string; phoneNumber?: string }) {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
     return { data: null, error: 'Supabase 服务端配置缺失。' };
   }
@@ -106,30 +123,40 @@ export async function registerSupabaseUser(input: { username: string; email: str
     return { data: null, error: '用户名或邮箱已存在。' };
   }
 
+  const authBody: Record<string, unknown> = {
+    email: input.email,
+    password: input.password,
+    email_confirm: true,
+    user_metadata: { username: input.username }
+  };
+  if (input.phoneNumber) {
+    authBody.phone = input.phoneNumber;
+  }
+
   const authResult = await fetchJson<{ user: SupabaseSessionUser }>(`/auth/v1/admin/users`, {
     method: 'POST',
     headers: buildHeaders(supabaseServiceRoleKey),
-    body: JSON.stringify({
-      email: input.email,
-      password: input.password,
-      email_confirm: true,
-      user_metadata: { username: input.username }
-    })
+    body: JSON.stringify(authBody)
   });
 
   if (authResult.error || !authResult.data?.user) {
     return { data: null, error: authResult.error ?? '创建用户失败。' };
   }
 
+  const profileBody: Record<string, unknown> = {
+    id: authResult.data.user.id,
+    username: input.username,
+    email: input.email,
+    role: 'user'
+  };
+  if (input.phoneNumber) {
+    profileBody.phone_number = input.phoneNumber;
+  }
+
   const profileInsert = await fetchJson<unknown>(`/rest/v1/profiles`, {
     method: 'POST',
     headers: buildHeaders(supabaseServiceRoleKey),
-    body: JSON.stringify({
-      id: authResult.data.user.id,
-      username: input.username,
-      email: input.email,
-      role: 'user'
-    })
+    body: JSON.stringify(profileBody)
   });
 
   if (profileInsert.error) {
@@ -152,9 +179,16 @@ export async function registerSupabaseUser(input: { username: string; email: str
   };
 }
 
-export async function signInSupabaseUser(input: { email: string; password: string }) {
+export async function signInSupabaseUser(input: { email: string; password: string } | { phone: string; password: string }) {
   if (!supabaseUrl || !supabaseAnonKey) {
     return { data: null, error: 'Supabase 公钥配置缺失。' };
+  }
+
+  const body: Record<string, string> = { password: input.password };
+  if ('email' in input) {
+    body.email = input.email;
+  } else {
+    body.phone = input.phone;
   }
 
   const authResult = await fetchJson<{ access_token: string; refresh_token: string; expires_in: number; token_type: string; user: SupabaseSessionUser }>(
@@ -162,10 +196,7 @@ export async function signInSupabaseUser(input: { email: string; password: strin
     {
       method: 'POST',
       headers: buildHeaders(supabaseAnonKey),
-      body: JSON.stringify({
-        email: input.email,
-        password: input.password
-      })
+      body: JSON.stringify(body)
     }
   );
 
@@ -384,4 +415,128 @@ export async function writeMatchingSession(input: {
 
 export async function readOrFallbackUserProfile(userId: string) {
   return readUserProfile(userId);
+}
+
+// ============ 系统参数管理 (对应 UML: SystemParameter) ============
+
+export async function readSystemParameters() {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    return [] as SystemParameter[];
+  }
+
+  const { data, error } = await fetchJson<Array<{ key: string; value: string; description: string | null; updated_by: string | null; updated_at: string | null }>>(
+    `/rest/v1/system_parameters?select=key,value,description,updated_by,updated_at&order=key.asc`,
+    { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+
+  if (error || !data) return [] as SystemParameter[];
+
+  return data.map((row) => ({
+    key: row.key,
+    value: parseParamValue(row.value),
+    description: row.description ?? undefined,
+    updatedBy: row.updated_by ?? undefined,
+    updatedAt: row.updated_at ?? undefined
+  })) as SystemParameter[];
+}
+
+export async function readSystemParameter(key: string) {
+  const params = await readSystemParameters();
+  return params.find((p) => p.key === key) ?? null;
+}
+
+export async function upsertSystemParameter(input: { key: string; value: string; description?: string; updatedBy?: string }) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    return { error: 'Supabase 服务端配置缺失。' };
+  }
+
+  const { error } = await fetchJson<unknown>(`/rest/v1/system_parameters`, {
+    method: 'POST',
+    headers: buildHeaders(supabaseServiceRoleKey, undefined, true),
+    body: JSON.stringify({
+      key: input.key,
+      value: String(input.value),
+      description: input.description ?? null,
+      updated_by: input.updatedBy ?? null
+    })
+  });
+
+  return { error };
+}
+
+function parseParamValue(value: string): string | number | boolean | Record<string, unknown> {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (/^\d+\.?\d*$/.test(value)) return Number(value);
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return value;
+  }
+}
+
+// ============ 问卷/题库管理 ============
+
+export async function upsertEvaluationQuestion(input: {
+  id: string;
+  title: string;
+  type: EvaluationType;
+  dimension: 'iq' | 'eq' | 'hybrid';
+  prompt: string;
+  difficulty: number;
+  sortOrder: number;
+  active?: boolean;
+}) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    return { error: 'Supabase 服务端配置缺失。' };
+  }
+
+  const { error } = await fetchJson<unknown>(`/rest/v1/evaluation_questions`, {
+    method: 'POST',
+    headers: buildHeaders(supabaseServiceRoleKey, undefined, true),
+    body: JSON.stringify({
+      id: input.id,
+      title: input.title,
+      type: input.type,
+      dimension: input.dimension,
+      prompt: input.prompt,
+      difficulty: input.difficulty,
+      sort_order: input.sortOrder,
+      active: input.active ?? true
+    })
+  });
+
+  return { error };
+}
+
+// ============ AI 候选管理 ============
+
+export async function upsertAiCandidate(input: {
+  id: string;
+  name: string;
+  personalityTags: string[];
+  interestTags: string[];
+  emotionTags: string[];
+  capabilityScore: number;
+  active?: boolean;
+}) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    return { error: 'Supabase 服务端配置缺失。' };
+  }
+
+  const { error } = await fetchJson<unknown>(`/rest/v1/ai_candidates`, {
+    method: 'POST',
+    headers: buildHeaders(supabaseServiceRoleKey, undefined, true),
+    body: JSON.stringify({
+      id: input.id,
+      name: input.name,
+      personality_tags: JSON.stringify(input.personalityTags),
+      interest_tags: JSON.stringify(input.interestTags),
+      emotion_tags: JSON.stringify(input.emotionTags),
+      capability_score: input.capabilityScore,
+      active: input.active ?? true
+    })
+  });
+
+  return { error };
 }

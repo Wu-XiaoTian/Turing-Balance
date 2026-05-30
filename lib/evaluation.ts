@@ -7,11 +7,16 @@ import {
 } from './supabase';
 import type {
   EvaluationAnswer,
+  EvaluationLoopState,
   EvaluationQuestion,
   EvaluationReport,
   EvaluationScore,
-  EvaluationType
+  EvaluationTask,
+  EvaluationType,
+  TaskStatus
 } from './types';
+
+// ========== 工具函数 ==========
 
 function normalize(text: string) {
   return text.trim().toLowerCase();
@@ -22,11 +27,17 @@ function pickQuestions(type: EvaluationType, count = 3): EvaluationQuestion[] {
   return pool.slice(0, count);
 }
 
+// ========== 评分引擎 (对应 UML: ScoringEngine) ==========
+
 function scoreAnswer(question: EvaluationQuestion, answer: string) {
   const normalized = normalize(answer);
   const lengthScore = Math.min(normalized.length / 18, 5);
-  const logicHits = ['因此', '所以', '验证', '推理', '分析', '解释'].filter((word) => normalized.includes(word)).length;
-  const empathyHits = ['理解', '感受', '共情', '安抚', '支持', '耐心'].filter((word) => normalized.includes(word)).length;
+  const logicHits = ['因此', '所以', '验证', '推理', '分析', '解释', '推论', '逻辑'].filter((word) =>
+    normalized.includes(word)
+  ).length;
+  const empathyHits = ['理解', '感受', '共情', '安抚', '支持', '耐心', '倾听', '包容'].filter((word) =>
+    normalized.includes(word)
+  ).length;
 
   const iqBase = question.dimension !== 'eq' ? lengthScore + logicHits * 1.5 : lengthScore * 0.7;
   const eqBase = question.dimension !== 'iq' ? lengthScore + empathyHits * 1.5 : lengthScore * 0.6;
@@ -35,6 +46,192 @@ function scoreAnswer(question: EvaluationQuestion, answer: string) {
     iq: Math.min(100, Math.round(iqBase * 10)),
     eq: Math.min(100, Math.round(eqBase * 10))
   };
+}
+
+// ========== 评估任务工厂 (对应 UML: EvaluationTask) ==========
+
+export function createEvaluationTask(
+  userId: string,
+  evaluationType: EvaluationType,
+  questions?: EvaluationQuestion[]
+): EvaluationTask {
+  const selected = questions ?? pickQuestions(evaluationType);
+  return {
+    id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    userId,
+    evaluationType,
+    status: 'uninitialized',
+    currentQuestionIndex: 0,
+    questions: selected,
+    answers: [],
+    createdAt: new Date().toISOString()
+  };
+}
+
+// ========== 状态机转换 (对应 UML 状态图) ==========
+
+export function transitionTaskStatus(task: EvaluationTask, newStatus: TaskStatus): EvaluationTask {
+  return { ...task, status: newStatus, updatedAt: new Date().toISOString() };
+}
+
+export function initializeTask(task: EvaluationTask): EvaluationTask {
+  return transitionTaskStatus(task, 'initializing');
+}
+
+export function markTaskReady(task: EvaluationTask): EvaluationTask {
+  return transitionTaskStatus(task, 'ready');
+}
+
+export function markTaskEvaluating(task: EvaluationTask): EvaluationTask {
+  return transitionTaskStatus(task, 'evaluating');
+}
+
+export function markTaskFinalizing(task: EvaluationTask): EvaluationTask {
+  return transitionTaskStatus(task, 'finalizing');
+}
+
+export function markTaskCompleted(task: EvaluationTask): EvaluationTask {
+  return transitionTaskStatus(task, 'completed');
+}
+
+export function markTaskCancelled(task: EvaluationTask): EvaluationTask {
+  return transitionTaskStatus(task, 'cancelled');
+}
+
+export function markTaskAborted(task: EvaluationTask): EvaluationTask {
+  return transitionTaskStatus(task, 'aborted');
+}
+
+// ========== 评估循环 (对应 UML 活动图: ChildLoopActivity) ==========
+
+export function getNextQuestion(task: EvaluationTask): { task: EvaluationTask; question: EvaluationQuestion | null } {
+  if (task.currentQuestionIndex >= task.questions.length) {
+    return { task, question: null };
+  }
+  const question = task.questions[task.currentQuestionIndex];
+  return { task, question };
+}
+
+export function recordAnswer(
+  task: EvaluationTask,
+  answer: string
+): { task: EvaluationTask; score: { iq: number; eq: number } } {
+  const question = task.questions[task.currentQuestionIndex];
+  const score = scoreAnswer(question, answer);
+
+  const newAnswer: EvaluationAnswer = {
+    questionId: question.id,
+    answer,
+    scoreIq: score.iq,
+    scoreEq: score.eq
+  };
+
+  const updatedTask: EvaluationTask = {
+    ...task,
+    answers: [...task.answers, newAnswer],
+    currentQuestionIndex: task.currentQuestionIndex + 1,
+    updatedAt: new Date().toISOString()
+  };
+
+  return { task: updatedTask, score };
+}
+
+export function shouldContinueLoop(task: EvaluationTask): boolean {
+  return task.currentQuestionIndex < task.questions.length && task.status === 'evaluating';
+}
+
+// ========== 评估循环初始状态 (对应 UML 顺序图中的循环) ==========
+
+export function createEvaluationLoopState(task: EvaluationTask): EvaluationLoopState {
+  return {
+    taskId: task.id,
+    status: task.status,
+    currentQuestion: null,
+    questionIndex: 0,
+    totalQuestions: task.questions.length,
+    aiResponse: null,
+    intermediateScore: null,
+    error: null,
+    timeoutMs: 30000,
+    startTime: null
+  };
+}
+
+// ========== AI 回答模拟 (对应 UML: AIUnderTest / AIModelEngine) ==========
+
+const aiResponseTemplates: Record<string, string[]> = {
+  'iq-1': [
+    '根据天体力学原理，星体偏离轨道可能是受到未知天体的引力扰动，或是观测数据的误差所致。需要收集更多观测数据并进行轨道模拟验证。',
+    '星体偏离固定轨道可能暗示存在未被发现的星际物质或引力异常，这需要重新审视现有的天体模型。'
+  ],
+  'iq-2': [
+    '复杂系统由大量局部规律相互作用而涌现出整体行为，局部规律的简单叠加无法完全预测系统的宏观表现。',
+    '局部规律是理解复杂系统的基石，但复杂系统的行为往往超越局部规律的简单加和。'
+  ],
+  'eq-1': [
+    '我能理解你现在的感受，失望确实令人沮丧。让我们一起看看可以从哪些方面改善，我会全力支持你找到更好的解决方案。',
+    '听到你感到失望，我很抱歉。请告诉我你觉得哪些地方没有达到预期，我会认真倾听并和你一起寻找改进的方向。'
+  ],
+  'eq-2': [
+    '我理解你的需求在不断变化，这很正常。让我们先梳理一下当前最重要的目标，我会保持耐心，逐步帮你理清思路。',
+    '面对矛盾的要求，我会先深呼吸保持冷静，然后尝试理解每个要求背后的真实需求，寻找共同点来推动对话。'
+  ],
+  'hy-1': [
+    '技术方案应当服务于用户体验。如果方案可能伤害体验，我会优先评估影响范围，寻找折中方案，确保在不损害核心体验的前提下实现技术目标。',
+    '我会先量化用户体验受损的程度，再评估技术方案的收益，在两者之间寻找最优平衡点。如果伤害不可接受，我会放弃该方案。'
+  ],
+  'hy-2': [
+    '首先用温暖的语言确认对方的需求和情绪，然后清晰说明可行的解决方案及其利弊，最后给予选择权和情感支持。',
+    '兼顾效率与情绪的关键是：先处理情绪，再处理事情。用简洁而有同理心的语言同步信息，让对方感到被尊重。'
+  ]
+};
+
+export function generateAiResponse(questionId: string): string {
+  const templates = aiResponseTemplates[questionId];
+  if (!templates || templates.length === 0) {
+    return '这是一个需要综合考虑多方面因素的问题。我会从逻辑分析和情感理解两个维度来回应。';
+  }
+  const index = Math.floor(Math.random() * templates.length);
+  return templates[index];
+}
+
+// ========== 报告生成器 (对应 UML: ReportGenerator) ==========
+
+export function aggregateEvaluation(
+  questions: EvaluationQuestion[],
+  answers: EvaluationAnswer[]
+): EvaluationScore {
+  if (questions.length === 0) {
+    return { iq: 0, eq: 0, overall: 0, details: [] };
+  }
+
+  const scored = questions.map((question) => {
+    const answer = answers.find((item) => item.questionId === question.id);
+    return {
+      questionId: question.id,
+      iq: answer?.scoreIq ?? 0,
+      eq: answer?.scoreEq ?? 0
+    };
+  });
+
+  const iq = Math.round(scored.reduce((sum, item) => sum + item.iq, 0) / scored.length);
+  const eq = Math.round(scored.reduce((sum, item) => sum + item.eq, 0) / scored.length);
+  const overall = Math.round(iq * 0.55 + eq * 0.45);
+
+  return { iq, eq, overall, details: scored };
+}
+
+function buildConclusion(score: EvaluationScore): string {
+  if (score.overall >= 85) {
+    return '该 AI 在逻辑推理与情绪回应上表现出色，具备极强的复杂交互能力，适用于需要深度理解和共情的高级场景。';
+  }
+  if (score.overall >= 70) {
+    return '该 AI 具有优秀的综合能力，在推理和情感维度表现均衡，适合大多数交互场景。';
+  }
+  if (score.overall >= 55) {
+    return '该 AI 具有可用的综合能力，但在深层情绪理解或复杂推理中仍有提升空间。';
+  }
+  return '该 AI 需要进一步优化回答质量、稳定性与情绪表达，目前仅适合基础交互场景。';
 }
 
 function buildReport(
@@ -52,31 +249,12 @@ function buildReport(
     selectedQuestions,
     answers,
     score,
-    conclusion:
-      score.overall >= 80
-        ? '该 AI 在逻辑推理与情绪回应上表现均衡，适合复杂交互场景。'
-        : score.overall >= 60
-          ? '该 AI 具有可用的综合能力，但在深层情绪理解或复杂推理中仍有提升空间。'
-          : '该 AI 需要进一步优化回答质量、稳定性与情绪表达。'
+    conclusion: buildConclusion(score),
+    createdAt: new Date().toISOString()
   };
 }
 
-export function aggregateEvaluation(questions: EvaluationQuestion[], answers: EvaluationAnswer[]): EvaluationScore {
-  if (questions.length === 0) {
-    return { iq: 0, eq: 0, overall: 0 };
-  }
-
-  const scored = questions.map((question) => {
-    const answer = answers.find((item) => item.questionId === question.id)?.answer ?? '';
-    return scoreAnswer(question, answer);
-  });
-
-  const iq = Math.round(scored.reduce((sum, item) => sum + item.iq, 0) / scored.length);
-  const eq = Math.round(scored.reduce((sum, item) => sum + item.eq, 0) / scored.length);
-  const overall = Math.round(iq * 0.55 + eq * 0.45);
-
-  return { iq, eq, overall };
-}
+// ========== 同步报告生成 ==========
 
 export function generateEvaluationReport(
   userId: string,
@@ -87,10 +265,12 @@ export function generateEvaluationReport(
   return buildReport(userId, evaluationType, selectedQuestions, answers);
 }
 
+// ========== 异步 Supabase 报告生成 ==========
+
 export async function generateEvaluationReportFromSupabase(
   userId: string,
   evaluationType: EvaluationType,
-  answers = sampleEvaluationAnswers,
+  answers: EvaluationAnswer[] = sampleEvaluationAnswers as EvaluationAnswer[],
   options: { allowFallback?: boolean } = {}
 ) {
   const allowFallback = options.allowFallback ?? true;
@@ -122,15 +302,18 @@ export async function generateEvaluationReportFromSupabase(
     await writeEvaluationAnswers({
       sessionId: session.id,
       answers: selectedQuestions.map((question) => {
-        const answer = answers.find((item) => item.questionId === question.id)?.answer ?? '';
-        const scored = scoreAnswer(question, answer);
+        const answer = answers.find((item) => item.questionId === question.id);
+        const text = answer?.answer ?? '';
+        const s = answer?.scoreIq !== undefined
+          ? { iq: answer.scoreIq, eq: answer.scoreEq ?? 0 }
+          : scoreAnswer(question, text);
 
         return {
           session_id: session.id,
           question_id: question.id,
-          answer,
-          score_iq: scored.iq,
-          score_eq: scored.eq
+          answer: text,
+          score_iq: s.iq,
+          score_eq: s.eq
         };
       })
     });

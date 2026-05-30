@@ -1,3 +1,0 @@
-1.设计一个 "测试不同AI的智商和情商"的软件
-2.软件名称为"Turing Balance"(图灵天平)
-3.前端将使用 vercel,后端将使用supabase

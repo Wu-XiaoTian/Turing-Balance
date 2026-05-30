@@ -1,104 +1,461 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { readAuthSession, type AuthSessionState } from '@/lib/auth-session';
+import {
+  createEvaluationTask,
+  initializeTask,
+  markTaskReady,
+  markTaskEvaluating,
+  markTaskFinalizing,
+  markTaskCompleted,
+  markTaskCancelled,
+  markTaskAborted,
+  getNextQuestion,
+  recordAnswer,
+  shouldContinueLoop,
+  generateAiResponse,
+  aggregateEvaluation,
+  createEvaluationLoopState
+} from '@/lib/evaluation';
+import type { EvaluationTask, EvaluationQuestion, EvaluationLoopState } from '@/lib/types';
+
+type PagePhase = 'welcome' | 'select-type' | 'evaluating' | 'finalizing' | 'result';
 
 export default function EvaluationPage() {
   const [session, setSession] = useState<AuthSessionState | null>(null);
+  const [phase, setPhase] = useState<PagePhase>('welcome');
+  const [task, setTask] = useState<EvaluationTask | null>(null);
+  const [loopState, setLoopState] = useState<EvaluationLoopState | null>(null);
+  const [currentQuestion, setCurrentQuestion] = useState<EvaluationQuestion | null>(null);
+  const [aiResponse, setAiResponse] = useState<string>('');
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [report, setReport] = useState<{
-    score: { iq: number; eq: number; overall: number };
-    status: string;
-    selectedQuestions: { id: string; prompt: string }[];
+    score: { iq: number; eq: number; overall: number; details?: { questionId: string; iq: number; eq: number }[] };
     conclusion: string;
+    answers: { questionId: string; answer: string }[];
   } | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const currentSession = readAuthSession();
-    setSession(currentSession);
+    setSession(readAuthSession());
   }, []);
 
+  const clearTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  // 开始评估
+  const startEvaluation = useCallback(
+    (type: 'iq' | 'eq' | 'iq_eq') => {
+      if (!session?.user?.id) return;
+
+      const newTask = createEvaluationTask(session.user.id, type);
+      const inited = initializeTask(newTask);
+      const ready = markTaskReady(inited);
+      const started = markTaskEvaluating(ready);
+      setTask(started);
+      setLoopState(createEvaluationLoopState(started));
+      setPhase('evaluating');
+      setProgress(0);
+    },
+    [session]
+  );
+
+  // 处理当前题目 -> AI 回答 -> 评分循环
   useEffect(() => {
-    async function loadReport() {
-      if (!session?.user?.id) {
-        setReport(null);
-        return;
+    if (phase !== 'evaluating' || !task || !shouldContinueLoop(task)) {
+      if (task && task.answers.length === task.questions.length && phase === 'evaluating') {
+        // 所有题目已完成，进入汇总阶段
+        finishEvaluation(task);
       }
-
-      const response = await fetch(`/api/evaluation?userId=${encodeURIComponent(session.user.id)}&type=iq_eq`);
-      const data = (await response.json()) as {
-        ok: boolean;
-        report?: {
-          score: { iq: number; eq: number; overall: number };
-          status: string;
-          selectedQuestions: { id: string; prompt: string }[];
-          conclusion: string;
-        };
-      };
-
-      setReport(data.report ?? null);
+      return;
     }
 
-    void loadReport();
-  }, [session]);
+    const { question } = getNextQuestion(task);
+    if (!question) {
+      finishEvaluation(task);
+      return;
+    }
 
-  return (
-    <main className="shell">
-      <section className="page-head">
-        <div>
-          <h1>AI 智商 / 情商评估</h1>
-          <p>映射 UML 的 EvaluationTask 状态机、EvaluationServer 编排与 EvaluationManager 评分逻辑。</p>
-        </div>
-        <span className="chip">评估 / 循环 / 汇总</span>
-      </section>
+    setCurrentQuestion(question);
+    setProgress(Math.round((task.currentQuestionIndex / task.questions.length) * 100));
+    setIsAiThinking(true);
+    setAiResponse('');
 
-      <section className="panel stack">
-        <div className="stats">
-          {session ? (
-            <>
-              <span className="stat">用户: {session.user.username ?? session.user.email ?? session.user.id}</span>
-              <span className="stat">IQ: {report?.score.iq ?? '--'}</span>
-              <span className="stat">EQ: {report?.score.eq ?? '--'}</span>
-              <span className="stat">Overall: {report?.score.overall ?? '--'}</span>
-              <span className="stat">Status: {report?.status ?? 'loading'}</span>
-            </>
-          ) : (
-            <span className="stat">请先登录后再查看评估结果</span>
-          )}
-        </div>
+    // 模拟 AI 思考延迟 (对应 UML: AIModelEngine - Process Question Text)
+    const thinkingTime = 1000 + Math.random() * 1500;
+    timerRef.current = setTimeout(() => {
+      const response = generateAiResponse(question.id);
+      setAiResponse(response);
+      setIsAiThinking(false);
 
-        {!session ? (
-          <div className="panel" style={{ padding: 16 }}>
-            <p className="muted">当前没有检测到登录态，请先登录。</p>
-            <Link className="button" href="/login">
-              去登录
-            </Link>
+      // 自动评分并记录 (对应 UML: ScoringEngine - Grade AI Response)
+      const { task: updatedTask } = recordAnswer(task, response);
+      setTask(updatedTask);
+      setCurrentQuestion(null);
+    }, thinkingTime);
+
+    return clearTimer;
+  }, [phase, task, task?.currentQuestionIndex, clearTimer]);
+
+  // 完成评估 (对应 UML: Finalizing state)
+  const finishEvaluation = useCallback((currentTask: EvaluationTask) => {
+    const finalized = markTaskFinalizing(currentTask);
+    setTask(finalized);
+    setPhase('finalizing');
+
+    // 汇总分数 (对应 UML: ScoringEngine - Calculate Overall Score)
+    setTimeout(() => {
+      const score = aggregateEvaluation(finalized.questions, finalized.answers);
+      const completed = markTaskCompleted(finalized);
+      setTask(completed);
+
+      const conclusion =
+        score.overall >= 85
+          ? '该 AI 在逻辑推理与情绪回应上表现出色，具备极强的复杂交互能力。'
+          : score.overall >= 70
+            ? '该 AI 具有优秀的综合能力，在推理和情感维度表现均衡。'
+            : score.overall >= 55
+              ? '该 AI 具有可用的综合能力，但在某些维度仍有提升空间。'
+              : '该 AI 需要进一步优化回答质量、稳定性与情绪表达。';
+
+      setReport({
+        score,
+        conclusion,
+        answers: completed.answers
+      });
+      setPhase('result');
+    }, 1500);
+  }, []);
+
+  // 取消评估
+  const cancelEvaluation = useCallback(() => {
+    clearTimer();
+    if (task) {
+      setTask(markTaskCancelled(task));
+    }
+    setPhase('welcome');
+    setCurrentQuestion(null);
+    setAiResponse('');
+    setIsAiThinking(false);
+    setReport(null);
+  }, [task, clearTimer]);
+
+  // 获取分数颜色
+  const scoreColor = (value: number) => {
+    if (value >= 80) return 'var(--success)';
+    if (value >= 60) return 'var(--accent)';
+    return 'var(--danger)';
+  };
+
+  // ========== 渲染 ==========
+
+  // 欢迎页
+  if (phase === 'welcome') {
+    return (
+      <main className="shell">
+        <section className="page-head">
+          <div>
+            <h1>AI 智商 / 情商评估</h1>
+            <p>对应 UML 状态机: Uninitialized → Initializing → Ready → Evaluating → Finalizing → Completed</p>
           </div>
-        ) : null}
+          <span className="chip">评估 / 循环 / 汇总</span>
+        </section>
 
-        <div>
-          <h2>流程说明</h2>
-          <ol className="muted">
-            <li>RequestEvaluation 创建任务与 Session。</li>
-            <li>进入取题、提交回答、评分、保存中间结果的循环。</li>
-            <li>结束后汇总所有中间结果并输出评估报告。</li>
-          </ol>
+        <section className="panel stack">
+          {!session ? (
+            <div className="panel" style={{ padding: 16 }}>
+              <p className="muted">请先登录后再进行评估。</p>
+              <Link className="button" href="/login">去登录</Link>
+            </div>
+          ) : (
+            <>
+              <div className="stats">
+                <span className="stat">用户: {session.user.username ?? session.user.email}</span>
+              </div>
+
+              <div>
+                <h2>选择评估类型</h2>
+                <div className="grid" style={{ marginTop: 16 }}>
+                  <article className="grid-card" style={{ cursor: 'pointer' }} onClick={() => startEvaluation('iq')}>
+                    <h3>🧠 智商评估 (IQ)</h3>
+                    <p>测试 AI 的逻辑推理、抽象建模和问题分析能力。</p>
+                    <span className="chip" style={{ marginTop: 12 }}>逻辑 / 推理 / 分析</span>
+                  </article>
+                  <article className="grid-card" style={{ cursor: 'pointer' }} onClick={() => startEvaluation('eq')}>
+                    <h3>❤️ 情商评估 (EQ)</h3>
+                    <p>测试 AI 的共情理解、情绪调节和人际互动能力。</p>
+                    <span className="chip" style={{ marginTop: 12 }}>共情 / 情绪 / 社交</span>
+                  </article>
+                  <article className="grid-card" style={{ cursor: 'pointer' }} onClick={() => startEvaluation('iq_eq')}>
+                    <h3>⚖️ 综合评估 (IQ+EQ)</h3>
+                    <p>全面测试 AI 在逻辑与情感维度的综合表现。</p>
+                    <span className="chip" style={{ marginTop: 12 }}>综合 / 平衡 / 全面</span>
+                  </article>
+                </div>
+              </div>
+
+              <div>
+                <h2>评估流程</h2>
+                <ol className="muted">
+                  <li><strong>RequestEvaluation</strong> → 创建评估任务与 Session</li>
+                  <li><strong>Evaluation Loop</strong>: 取题 → AI 回答 → 评分 → 保存结果 (循环)</li>
+                  <li><strong>Finalizing</strong>: 汇总所有分数 → 生成报告 → 输出结果</li>
+                </ol>
+              </div>
+            </>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  // 评估进行中
+  if (phase === 'evaluating') {
+    return (
+      <main className="shell">
+        <section className="page-head">
+          <div>
+            <h1>评估进行中</h1>
+            <p>{task?.evaluationType === 'iq' ? '智商评估' : task?.evaluationType === 'eq' ? '情商评估' : '综合评估'}</p>
+          </div>
+          <span className="chip">
+            {isAiThinking ? 'AI 思考中...' : '评分中...'} · 第 {task?.answers.length ?? 0}/{task?.questions.length ?? 0} 题
+          </span>
+        </section>
+
+        {/* 进度条 */}
+        <div style={{
+          width: '100%',
+          height: 8,
+          background: 'rgba(255,255,255,0.1)',
+          borderRadius: 4,
+          marginBottom: 20,
+          overflow: 'hidden'
+        }}>
+          <div style={{
+            width: `${progress}%`,
+            height: '100%',
+            background: 'linear-gradient(90deg, var(--accent), var(--accent-2))',
+            borderRadius: 4,
+            transition: 'width 0.5s ease'
+          }} />
         </div>
 
-        <div>
-          <h3>示例题目</h3>
-          <ul className="muted">
-            {report?.selectedQuestions.map((question) => (
-              <li key={question.id}>{question.prompt}</li>
+        <section className="panel stack">
+          {/* 当前题目 */}
+          {currentQuestion && (
+            <div>
+              <div className="stats" style={{ marginBottom: 12 }}>
+                <span className="stat">难度: {'⭐'.repeat(currentQuestion.difficulty)}</span>
+                <span className="stat">维度: {currentQuestion.dimension === 'iq' ? '逻辑' : currentQuestion.dimension === 'eq' ? '情感' : '综合'}</span>
+              </div>
+              <div className="panel" style={{
+                background: 'rgba(56,189,248,0.06)',
+                border: '1px solid rgba(56,189,248,0.2)'
+              }}>
+                <h3>{currentQuestion.title}</h3>
+                <p style={{ fontSize: '1.1rem', lineHeight: 1.8 }}>{currentQuestion.prompt}</p>
+              </div>
+            </div>
+          )}
+
+          {/* AI 思考状态 */}
+          {isAiThinking && (
+            <div className="panel" style={{
+              background: 'rgba(245,158,11,0.06)',
+              border: '1px solid rgba(245,158,11,0.2)'
+            }}>
+              <div className="stats">
+                <span className="stat">🤖 AI 模型正在处理问题...</span>
+                <span className="stat" style={{ animation: 'pulse 1.5s infinite' }}>⏳ 生成回答中</span>
+              </div>
+              <div style={{ marginTop: 12, display: 'flex', gap: 6 }}>
+                {[0, 1, 2].map((i) => (
+                  <div key={i} style={{
+                    width: 12, height: 12, borderRadius: '50%',
+                    background: 'var(--accent)',
+                    animation: `bounce 1.4s ${i * 0.2}s infinite`
+                  }} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* AI 回答 */}
+          {aiResponse && !isAiThinking && (
+            <div className="panel" style={{
+              background: 'rgba(34,197,94,0.06)',
+              border: '1px solid rgba(34,197,94,0.2)'
+            }}>
+              <div className="stats" style={{ marginBottom: 8 }}>
+                <span className="stat">✅ AI 回答完成</span>
+                <span className="stat">📊 评分中...</span>
+              </div>
+              <p style={{ lineHeight: 1.8 }}>{aiResponse}</p>
+            </div>
+          )}
+        </section>
+
+        {/* 操作按钮 */}
+        <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+          <button className="button" onClick={cancelEvaluation} style={{ background: 'var(--danger)', color: 'white' }}>
+            中止评估
+          </button>
+        </div>
+
+        <style>{`
+          @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+          @keyframes bounce { 0%,80%,100% { transform: scale(0.6); } 40% { transform: scale(1); } }
+        `}</style>
+      </main>
+    );
+  }
+
+  // 结果汇总中
+  if (phase === 'finalizing') {
+    return (
+      <main className="shell">
+        <section className="page-head">
+          <div>
+            <h1>正在生成评估报告</h1>
+            <p>对应 UML Finalizing 状态: 获取所有中间结果 → 聚合分数 → 生成报告</p>
+          </div>
+          <span className="chip">汇总中...</span>
+        </section>
+        <section className="panel stack" style={{ textAlign: 'center', padding: 60 }}>
+          <div style={{ fontSize: '3rem', marginBottom: 20 }}>📊</div>
+          <h2>正在计算综合评分...</h2>
+          <div style={{
+            width: 60, height: 60, margin: '20px auto',
+            border: '4px solid rgba(255,255,255,0.1)',
+            borderTopColor: 'var(--accent)',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite'
+          }} />
+          <p className="muted">FetchAllIntermediateResults → AggregateScores → GenerateReport</p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </section>
+      </main>
+    );
+  }
+
+  // 评估结果
+  if (phase === 'result' && report) {
+    return (
+      <main className="shell">
+        <section className="page-head">
+          <div>
+            <h1>评估报告</h1>
+            <p>评估已完成，以下为 AI 的智商与情商综合评分</p>
+          </div>
+          <span className="chip">
+            {report.score.overall >= 80 ? '🌟 优秀' : report.score.overall >= 60 ? '👍 良好' : '📈 待提升'}
+          </span>
+        </section>
+
+        {/* 分数概览 */}
+        <section className="panel stack">
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            <div className="panel" style={{ textAlign: 'center', padding: 20 }}>
+              <div style={{ fontSize: '2.5rem', fontWeight: 700, color: scoreColor(report.score.iq) }}>
+                {report.score.iq}
+              </div>
+              <div className="muted">智商 (IQ)</div>
+            </div>
+            <div className="panel" style={{ textAlign: 'center', padding: 20 }}>
+              <div style={{ fontSize: '2.5rem', fontWeight: 700, color: scoreColor(report.score.eq) }}>
+                {report.score.eq}
+              </div>
+              <div className="muted">情商 (EQ)</div>
+            </div>
+            <div className="panel" style={{ textAlign: 'center', padding: 20 }}>
+              <div style={{ fontSize: '2.5rem', fontWeight: 700, color: scoreColor(report.score.overall) }}>
+                {report.score.overall}
+              </div>
+              <div className="muted">综合评分</div>
+            </div>
+          </div>
+
+          {/* 分数条 */}
+          <div style={{ marginTop: 8 }}>
+            {[
+              { label: '智商 (IQ)', value: report.score.iq, color: 'var(--accent-2)' },
+              { label: '情商 (EQ)', value: report.score.eq, color: 'var(--accent)' },
+              { label: '综合评分', value: report.score.overall, color: 'var(--success)' }
+            ].map((item) => (
+              <div key={item.label} style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span>{item.label}</span>
+                  <span>{item.value}/100</span>
+                </div>
+                <div style={{ width: '100%', height: 12, background: 'rgba(255,255,255,0.1)', borderRadius: 6, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${item.value}%`,
+                    height: '100%',
+                    background: `linear-gradient(90deg, ${item.color}88, ${item.color})`,
+                    borderRadius: 6,
+                    transition: 'width 1s ease'
+                  }} />
+                </div>
+              </div>
             ))}
-          </ul>
-        </div>
+          </div>
+        </section>
 
-        <div>
-          <h3>结论</h3>
-          <p>{report?.conclusion ?? '当前评估结果未生成。'}</p>
+        {/* 题目明细 */}
+        <section className="panel stack" style={{ marginTop: 16 }}>
+          <h2>题目明细</h2>
+          {task?.questions.map((q, i) => {
+            const ans = report.answers[i];
+            const detail = report.score.details?.find((d) => d.questionId === q.id);
+            return (
+              <div key={q.id} className="panel" style={{ padding: 16 }}>
+                <div className="stats" style={{ marginBottom: 8 }}>
+                  <span className="stat">#{i + 1} {q.title}</span>
+                  {detail && (
+                    <>
+                      <span className="stat" style={{ color: scoreColor(detail.iq) }}>IQ: {detail.iq}</span>
+                      <span className="stat" style={{ color: scoreColor(detail.eq) }}>EQ: {detail.eq}</span>
+                    </>
+                  )}
+                </div>
+                <p className="muted" style={{ fontSize: '0.9rem' }}><strong>问题:</strong> {q.prompt}</p>
+                <p style={{ fontSize: '0.9rem', color: 'var(--success)' }}><strong>AI 回答:</strong> {ans?.answer}</p>
+              </div>
+            );
+          })}
+        </section>
+
+        {/* 结论 */}
+        <section className="panel stack" style={{ marginTop: 16 }}>
+          <h2>评估结论</h2>
+          <p style={{ fontSize: '1.1rem', lineHeight: 1.8 }}>{report.conclusion}</p>
+        </section>
+
+        {/* 操作 */}
+        <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
+          <button className="button" onClick={() => {
+            setPhase('welcome');
+            setTask(null);
+            setReport(null);
+            setAiResponse('');
+          }}>
+            重新评估
+          </button>
+          <Link className="button-ghost" href="/matching">华清池匹配</Link>
+          <Link className="button-ghost" href="/">返回首页</Link>
         </div>
-      </section>
-    </main>
-  );
+      </main>
+    );
+  }
+
+  // fallback
+  return null;
 }

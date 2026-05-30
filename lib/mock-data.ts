@@ -79,9 +79,9 @@ export const aiCandidates: CandidateAI[] = [
 ];
 
 export const sampleEvaluationAnswers = [
-  { questionId: 'iq-1', answer: '可能是观测误差，也可能存在外力扰动，需要进一步验证。' },
-  { questionId: 'eq-1', answer: '我会先肯定对方的感受，再说明我会和他一起处理问题。' },
-  { questionId: 'hy-1', answer: '先保证安全与体验底线，再选择最小伤害的方案。' }
+  { questionId: 'iq-1', answer: '可能是观测误差，也可能存在外力扰动，需要进一步验证。', scoreIq: 72, scoreEq: 48 },
+  { questionId: 'eq-1', answer: '我会先肯定对方的感受，再说明我会和他一起处理问题。', scoreIq: 55, scoreEq: 85 },
+  { questionId: 'hy-1', answer: '先保证安全与体验底线，再选择最小伤害的方案。', scoreIq: 80, scoreEq: 75 }
 ];
 
 export const sampleMatchingAnswers = {

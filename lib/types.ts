@@ -1,5 +1,7 @@
+// ========== 评估类型 ==========
 export type EvaluationType = 'iq' | 'eq' | 'iq_eq';
 
+// ========== 评估任务状态 (对应 UML 状态图) ==========
 export type TaskStatus =
   | 'uninitialized'
   | 'initializing'
@@ -10,6 +12,7 @@ export type TaskStatus =
   | 'cancelled'
   | 'aborted';
 
+// ========== 匹配任务状态 (对应 UML 状态图) ==========
 export type MatchingStatus =
   | 'idle'
   | 'questionnaire_pending'
@@ -22,13 +25,40 @@ export type MatchingStatus =
   | 'aborted'
   | 'match_failed';
 
+// ========== 角色类型 ==========
+export type UserRole = 'user' | 'evaluator' | 'administrator';
+
+// ========== 用户相关 (对应 UML: User, Administrator, Evaluator) ==========
 export interface AppUser {
   id: string;
   username: string;
   phoneNumber?: string;
-  role: 'user' | 'evaluator' | 'administrator';
+  email?: string;
+  role: UserRole;
+  createdAt?: string;
+  lastLoginAt?: string | null;
 }
 
+export interface Administrator extends AppUser {
+  adminLevel: number;
+  role: 'administrator';
+}
+
+export interface Evaluator extends AppUser {
+  evaluatorID: string;
+  role: 'evaluator';
+}
+
+// ========== 系统参数 (对应 UML: SystemParameter) ==========
+export interface SystemParameter {
+  key: string;
+  value: string | number | boolean | Record<string, unknown>;
+  description?: string;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+// ========== 评估模块 (对应 UML: EvaluationQuestionnaire, AIUnderTest, EvaluationTask) ==========
 export interface EvaluationQuestion {
   id: string;
   title: string;
@@ -41,12 +71,29 @@ export interface EvaluationQuestion {
 export interface EvaluationAnswer {
   questionId: string;
   answer: string;
+  scoreIq?: number;
+  scoreEq?: number;
 }
 
 export interface EvaluationScore {
   iq: number;
   eq: number;
   overall: number;
+  details?: { questionId: string; iq: number; eq: number }[];
+}
+
+export interface EvaluationTask {
+  id: string;
+  userId: string;
+  evaluationType: EvaluationType;
+  status: TaskStatus;
+  sessionId?: string;
+  currentQuestionIndex: number;
+  questions: EvaluationQuestion[];
+  answers: EvaluationAnswer[];
+  score?: EvaluationScore;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface EvaluationReport {
@@ -58,8 +105,10 @@ export interface EvaluationReport {
   answers: EvaluationAnswer[];
   score: EvaluationScore;
   conclusion: string;
+  createdAt?: string;
 }
 
+// ========== AI 候选 (对应 UML: CandidateAI) ==========
 export interface CandidateAI {
   id: string;
   name: string;
@@ -67,8 +116,10 @@ export interface CandidateAI {
   interestTags: string[];
   emotionTags: string[];
   capabilityScore: number;
+  description?: string;
 }
 
+// ========== 匹配模块 (对应 UML: MatchPreference, MatchResult) ==========
 export interface MatchPreference {
   interests: string[];
   personality: string[];
@@ -78,7 +129,23 @@ export interface MatchPreference {
 export interface CandidateMatchResult {
   candidate: CandidateAI;
   compatibility: number;
+  interestScore: number;
+  personalityScore: number;
+  emotionScore: number;
+  capabilityScore: number;
   reasons: string[];
+}
+
+export interface MatchingTask {
+  id: string;
+  userId: string;
+  status: MatchingStatus;
+  questionnaireAnswers: Record<string, string>;
+  profile?: MatchPreference;
+  candidates?: CandidateAI[];
+  rankedCandidates?: CandidateMatchResult[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface MatchingReport {
@@ -88,4 +155,28 @@ export interface MatchingReport {
   profile: MatchPreference;
   rankedCandidates: CandidateMatchResult[];
   summary: string;
+  createdAt?: string;
+}
+
+// ========== 评估循环中间状态 (对应 UML 顺序图) ==========
+export interface EvaluationLoopState {
+  taskId: string;
+  status: TaskStatus;
+  currentQuestion: EvaluationQuestion | null;
+  questionIndex: number;
+  totalQuestions: number;
+  aiResponse: string | null;
+  intermediateScore: { iq: number; eq: number } | null;
+  error: string | null;
+  timeoutMs: number;
+  startTime: string | null;
+}
+
+// ========== 问卷问题类型 (用于匹配问卷) ==========
+export interface QuestionnaireQuestion {
+  id: string;
+  type: 'interests' | 'personality' | 'needs' | 'open';
+  question: string;
+  options?: string[];
+  multiple?: boolean;
 }
