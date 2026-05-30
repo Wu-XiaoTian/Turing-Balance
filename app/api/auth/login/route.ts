@@ -28,7 +28,7 @@ export async function POST(request: Request) {
 
   return Response.json({
     ok: true,
-    mode: result.data.mode,
+    mode: 'supabase',
     user: {
       id: result.data.user.id,
       email: result.data.user.email,
