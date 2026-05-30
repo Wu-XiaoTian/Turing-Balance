@@ -33,7 +33,6 @@ export function AuthPanel({ mode }: AuthPanelProps) {
   const isLogin = mode === 'login';
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -56,7 +55,6 @@ export function AuthPanel({ mode }: AuthPanelProps) {
       } else {
         body.username = username;
         body.email = email;
-        body.phoneNumber = phoneNumber;
         body.password = password;
       }
 
@@ -152,16 +150,10 @@ export function AuthPanel({ mode }: AuthPanelProps) {
           ) : null}
 
           {!isLogin ? (
-            <>
-              <label className="stack">
-                <span>邮箱地址</span>
-                <input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-              </label>
-              <label className="stack">
-                <span>手机号码（选填）</span>
-                <input className="field" type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="13800138000" />
-              </label>
-            </>
+            <label className="stack">
+              <span>邮箱地址</span>
+              <input className="field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            </label>
           ) : null}
 
           <label className="stack">
@@ -203,7 +195,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
               </>
             ) : (
               <>
-                <li>用户提交用户名、邮箱、密码（可选手机号）。</li>
+                <li>用户提交用户名、邮箱和密码。</li>
                 <li>RegistrationManager 进行重复性检测。</li>
                 <li>通过后创建 Supabase Auth 用户，并写入 profiles 表。</li>
                 <li>返回成功后自动写入浏览器登录态。</li>

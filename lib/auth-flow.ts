@@ -55,8 +55,7 @@ export async function handleAuthRequest(request: Request, forcedMode?: AuthMode)
     const result = await registerSupabaseUser({
       username: body.username,
       email: body.email,
-      password: body.password,
-      phoneNumber: body.phoneNumber
+      password: body.password
     });
 
     if (result.error || !result.data) {

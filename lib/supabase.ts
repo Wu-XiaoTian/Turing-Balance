@@ -159,7 +159,7 @@ export async function fetchJson<T>(path: string, init: RequestInit): Promise<{ d
   return { data: JSON.parse(text) as T, error: null };
 }
 
-export async function registerSupabaseUser(input: { username: string; email: string; password: string; phoneNumber?: string }) {
+export async function registerSupabaseUser(input: { username: string; email: string; password: string }) {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
     return { data: null, error: 'Supabase 服务端配置缺失。' };
   }
@@ -188,30 +188,25 @@ export async function registerSupabaseUser(input: { username: string; email: str
     email_confirm: true,
     user_metadata: { username: input.username }
   };
-  if (input.phoneNumber) {
-    authBody.phone = input.phoneNumber;
-  }
 
-  const authResult = await fetchJson<{ user: SupabaseSessionUser }>(`/auth/v1/admin/users`, {
+  // Supabase GoTrue Admin API 直接返回用户对象，而非 { user: ... } 嵌套格式
+  const authResult = await fetchJson<SupabaseSessionUser>(`/auth/v1/admin/users`, {
     method: 'POST',
     headers: buildHeaders(supabaseServiceRoleKey),
     body: JSON.stringify(authBody)
   });
 
-  if (authResult.error || !authResult.data?.user) {
+  if (authResult.error || !authResult.data?.id) {
     const readableError = authResult.error ? parseSupabaseError(authResult.error) : '创建用户失败，请稍后重试。';
     return { data: null, error: readableError };
   }
 
   const profileBody: Record<string, unknown> = {
-    id: authResult.data.user.id,
+    id: authResult.data.id,
     username: input.username,
     email: input.email,
     role: 'user'
   };
-  if (input.phoneNumber) {
-    profileBody.phone_number = input.phoneNumber;
-  }
 
   const profileInsert = await fetchJson<unknown>(`/rest/v1/profiles`, {
     method: 'POST',
@@ -220,7 +215,7 @@ export async function registerSupabaseUser(input: { username: string; email: str
   });
 
   if (profileInsert.error) {
-    await fetch(`${supabaseUrl}/auth/v1/admin/users/${authResult.data.user.id}`, {
+    await fetch(`${supabaseUrl}/auth/v1/admin/users/${authResult.data.id}`, {
       method: 'DELETE',
       headers: buildHeaders(supabaseServiceRoleKey)
     });
@@ -230,7 +225,7 @@ export async function registerSupabaseUser(input: { username: string; email: str
 
   return {
     data: {
-      id: authResult.data.user.id,
+      id: authResult.data.id,
       username: input.username,
       email: input.email,
       role: 'user' as const
