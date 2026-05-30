@@ -163,7 +163,7 @@ export default function EvaluationPage() {
         <section className="page-head">
           <div>
             <h1>AI 智商 / 情商评估</h1>
-            <p>对应 UML 状态机: Uninitialized → Initializing → Ready → Evaluating → Finalizing → Completed</p>
+            <p>通过多领域题库对 AI 进行智商、情商及综合能力评估</p>
           </div>
           <span className="chip">评估 / 循环 / 汇总</span>
         </section>
@@ -204,9 +204,9 @@ export default function EvaluationPage() {
               <div>
                 <h2>评估流程</h2>
                 <ol className="muted">
-                  <li><strong>RequestEvaluation</strong> → 创建评估任务与 Session</li>
-                  <li><strong>Evaluation Loop</strong>: 取题 → AI 回答 → 评分 → 保存结果 (循环)</li>
-                  <li><strong>Finalizing</strong>: 汇总所有分数 → 生成报告 → 输出结果</li>
+                  <li><strong>创建任务</strong> → 选择评估类型并创建评测会话</li>
+                  <li><strong>评估循环</strong>: 逐题取题 → AI 回答 → 自动评分 → 记录结果（循环执行）</li>
+                  <li><strong>汇总报告</strong>: 聚合所有分数 → 计算加权总分 → 生成分析报告</li>
                 </ol>
               </div>
             </>
@@ -325,7 +325,7 @@ export default function EvaluationPage() {
         <section className="page-head">
           <div>
             <h1>正在生成评估报告</h1>
-            <p>对应 UML Finalizing 状态: 获取所有中间结果 → 聚合分数 → 生成报告</p>
+            <p>正在汇总所有题目评分，计算综合得分并生成分析结论……</p>
           </div>
           <span className="chip">汇总中...</span>
         </section>
@@ -339,7 +339,6 @@ export default function EvaluationPage() {
             borderRadius: '50%',
             animation: 'spin 1s linear infinite'
           }} />
-          <p className="muted">FetchAllIntermediateResults → AggregateScores → GenerateReport</p>
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </section>
       </main>
@@ -360,48 +359,42 @@ export default function EvaluationPage() {
           </span>
         </section>
 
-        {/* 分数概览 */}
-        <section className="panel stack">
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-            <div className="panel" style={{ textAlign: 'center', padding: 20 }}>
-              <div style={{ fontSize: '2.5rem', fontWeight: 700, color: scoreColor(report.score.iq) }}>
-                {report.score.iq}
-              </div>
-              <div className="muted">智商 (IQ)</div>
-            </div>
-            <div className="panel" style={{ textAlign: 'center', padding: 20 }}>
-              <div style={{ fontSize: '2.5rem', fontWeight: 700, color: scoreColor(report.score.eq) }}>
-                {report.score.eq}
-              </div>
-              <div className="muted">情商 (EQ)</div>
-            </div>
-            <div className="panel" style={{ textAlign: 'center', padding: 20 }}>
-              <div style={{ fontSize: '2.5rem', fontWeight: 700, color: scoreColor(report.score.overall) }}>
-                {report.score.overall}
-              </div>
-              <div className="muted">综合评分</div>
-            </div>
+        {/* 环形仪表盘 */}
+        <section className="panel stack" style={{ textAlign: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 32, flexWrap: 'wrap', padding: '20px 0' }}>
+            {[
+              { label: '智商 IQ', value: report.score.iq, color: '#38bdf8', desc: '逻辑推理·抽象分析能力' },
+              { label: '情商 EQ', value: report.score.eq, color: '#f59e0b', desc: '共情理解·情绪调节能力' },
+              { label: '综合评分', value: report.score.overall, color: '#22c55e', desc: '加权综合表现' }
+            ].map((item) => (
+              <GaugeRing key={item.label} label={item.label} value={item.value} color={item.color} desc={item.desc} />
+            ))}
           </div>
 
-          {/* 分数条 */}
+          {/* 雷达风格条形对比 */}
           <div style={{ marginTop: 8 }}>
+            <h3 style={{ marginBottom: 16 }}>多维度能力雷达</h3>
             {[
-              { label: '智商 (IQ)', value: report.score.iq, color: 'var(--accent-2)' },
-              { label: '情商 (EQ)', value: report.score.eq, color: 'var(--accent)' },
-              { label: '综合评分', value: report.score.overall, color: 'var(--success)' }
+              { label: '逻辑推理', value: report.score.details?.[0]?.iq ?? 0, max: 100 },
+              { label: '抽象建模', value: report.score.details?.[1]?.iq ?? 0, max: 100 },
+              { label: '共情理解', value: report.score.details?.[2]?.eq ?? report.score.details?.[0]?.eq ?? 0, max: 100 },
+              { label: '情绪调节', value: report.score.details?.[3]?.eq ?? report.score.details?.[1]?.eq ?? 0, max: 100 },
+              { label: '综合判断', value: report.score.iq, max: 100 },
+              { label: '综合决策', value: report.score.eq, max: 100 }
             ].map((item) => (
-              <div key={item.label} style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <div key={item.label} style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.9rem' }}>
                   <span>{item.label}</span>
-                  <span>{item.value}/100</span>
+                  <span style={{ fontWeight: 700 }}>{item.value}</span>
                 </div>
-                <div style={{ width: '100%', height: 12, background: 'rgba(255,255,255,0.1)', borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ width: '100%', height: 8, background: 'rgba(255,255,255,0.06)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{
-                    width: `${item.value}%`,
+                    width: `${Math.min(item.value, 100)}%`,
                     height: '100%',
-                    background: `linear-gradient(90deg, ${item.color}88, ${item.color})`,
-                    borderRadius: 6,
-                    transition: 'width 1s ease'
+                    background: `linear-gradient(90deg, #38bdf8, #f59e0b, #22c55e)`,
+                    borderRadius: 4,
+                    transition: 'width 1.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    boxShadow: '0 0 12px rgba(56,189,248,0.3)'
                   }} />
                 </div>
               </div>
@@ -458,4 +451,45 @@ export default function EvaluationPage() {
 
   // fallback
   return null;
+}
+
+// ========== 环形仪表盘组件 ==========
+function GaugeRing({ label, value, color, desc }: { label: string; value: number; color: string; desc: string }) {
+  const radius = 54;
+  const strokeWidth = 8;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (value / 100) * circumference;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+      <svg width="140" height="140" viewBox="0 0 140 140">
+        <defs>
+          <filter id={`glow-${label}`} x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <circle cx="70" cy="70" r={radius} fill="none"
+          stroke="rgba(255,255,255,0.06)" strokeWidth={strokeWidth} />
+        <circle cx="70" cy="70" r={radius} fill="none"
+          stroke={color} strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          transform="rotate(-90 70 70)"
+          filter={`url(#glow-${label})`}
+          style={{ transition: 'stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1)' }} />
+        <text x="70" y="62" textAnchor="middle" fill="#fff"
+          fontSize="22" fontWeight="700" fontFamily="var(--font-display)">
+          {value}
+        </text>
+        <text x="70" y="82" textAnchor="middle" fill="var(--muted)"
+          fontSize="12">/ 100</text>
+      </svg>
+      <div style={{ fontWeight: 700, fontSize: '0.95rem', color }}>{label}</div>
+      <div className="muted" style={{ fontSize: '0.75rem' }}>{desc}</div>
+    </div>
+  );
 }

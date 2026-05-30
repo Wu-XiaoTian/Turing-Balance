@@ -83,9 +83,9 @@ export function AuthPanel({ mode }: AuthPanelProps) {
 
   const title = isLogin ? '登录' : '注册';
   const description = isLogin
-    ? '对应 UML 中的 LoginManager、LoginUI 与 UserDatabase 交互流程。使用邮箱登录。'
-    : '对应 UML 中的 RegistrationManager、RegistrationUI 和 IDCardServer/重复性校验逻辑。';
-  const chipLabel = isLogin ? '认证 / 校验 / 会话' : '注册 / 查重 / 入库';
+    ? '使用邮箱账号登录，安全访问评估与匹配功能。'
+    : '创建新账号，开始您的 AI 评估与伴侣匹配之旅。';
+  const chipLabel = isLogin ? '安全验证' : '创建账号';
   const alternateHref = isLogin ? '/auth?mode=register' : '/auth?mode=login';
   const alternateLabel = isLogin ? '没有账号？去注册' : '已有账号？去登录';
 
@@ -146,16 +146,16 @@ export function AuthPanel({ mode }: AuthPanelProps) {
             {isLogin ? (
               <>
                 <li>用户提交邮箱与密码。</li>
-                <li>LoginManager 校验格式后调用 Supabase Auth 完成身份验证。</li>
-                <li>读取 profiles 表返回用户资料，更新 last_login_at。</li>
-                <li>登录态写入浏览器存储，跳转到评估页。</li>
+                <li>系统校验身份信息，完成安全验证。</li>
+                <li>读取用户资料并更新登录记录。</li>
+                <li>登录态保存，跳转到功能页面。</li>
               </>
             ) : (
               <>
                 <li>用户提交用户名、邮箱和密码。</li>
-                <li>RegistrationManager 进行重复性检测。</li>
-                <li>通过后创建 Supabase Auth 用户，并写入 profiles 表。</li>
-                <li>返回成功后自动写入浏览器登录态。</li>
+                <li>系统进行账号重复性检测。</li>
+                <li>通过后创建账号并保存用户资料。</li>
+                <li>返回成功后自动登录。</li>
               </>
             )}
           </ol>

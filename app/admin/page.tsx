@@ -96,7 +96,7 @@ export default function AdminPage() {
       <section className="page-head">
         <div>
           <h1>系统管理</h1>
-          <p>对应 UML: SystemParameter、Administrator 管理后台</p>
+          <p>管理系统参数配置与维护</p>
         </div>
         <div className="stats">
           <span className="chip">管理员: {session.user.username ?? session.user.email}</span>

@@ -18,33 +18,71 @@ import type {
 
 // ========== 工具函数 ==========
 
-function normalize(text: string) {
-  return text.trim().toLowerCase();
-}
-
 function pickQuestions(type: EvaluationType, count = 3): EvaluationQuestion[] {
   const pool = evaluationQuestions.filter((question) => type === 'iq_eq' || question.type === type);
   return pool.slice(0, count);
 }
 
-// ========== 评分引擎 (对应 UML: ScoringEngine) ==========
+// ========== 评分引擎 (专业公式模型) ==========
 
+/** IQ 维度关键词权重表 */
+const IQ_KEYWORDS: Record<string, number> = {
+  '因此': 2.0, '所以': 1.8, '验证': 1.5, '推理': 2.0, '分析': 1.8,
+  '解释': 1.5, '推论': 2.0, '逻辑': 2.5, '论证': 1.8, '结论': 1.5,
+  '假设': 2.0, '推导': 2.0, '模型': 1.5, '计算': 1.2, '证据': 1.5,
+  '量化': 1.8, '因果': 2.0, '判断': 1.5, '原理': 1.5, '规律': 1.8
+};
+
+/** EQ 维度关键词权重表 */
+const EQ_KEYWORDS: Record<string, number> = {
+  '理解': 2.0, '感受': 2.0, '共情': 2.5, '安抚': 2.0, '支持': 1.8,
+  '耐心': 1.5, '倾听': 2.0, '包容': 2.0, '尊重': 1.8, '陪伴': 1.5,
+  '温暖': 2.0, '关心': 1.5, '鼓励': 2.0, '体谅': 2.0, '情绪': 2.0,
+  '安慰': 2.0, '信任': 1.5, '平衡': 1.5, '沟通': 1.5, '接纳': 2.0
+};
+
+/**
+ * 专业评分公式：
+ * Overall = Average(IQ_i) × 0.55 + Average(EQ_i) × 0.45
+ * 每题: IQ_i = α·L + β·K_IQ  其中 α=0.3, β=0.7, L 为长度质量分, K 为关键词加权命中率
+ *       EQ_i = α·L + β·K_EQ  同理使用 EQ 关键词权重表
+ * 难度系数: 1 + (difficulty-1) × 0.05
+ */
 function scoreAnswer(question: EvaluationQuestion, answer: string) {
-  const normalized = normalize(answer);
-  const lengthScore = Math.min(normalized.length / 18, 5);
-  const logicHits = ['因此', '所以', '验证', '推理', '分析', '解释', '推论', '逻辑'].filter((word) =>
-    normalized.includes(word)
-  ).length;
-  const empathyHits = ['理解', '感受', '共情', '安抚', '支持', '耐心', '倾听', '包容'].filter((word) =>
-    normalized.includes(word)
-  ).length;
+  const normalized = answer.trim().toLowerCase();
+  const charCount = normalized.replace(/\s/g, '').length;
 
-  const iqBase = question.dimension !== 'eq' ? lengthScore + logicHits * 1.5 : lengthScore * 0.7;
-  const eqBase = question.dimension !== 'iq' ? lengthScore + empathyHits * 1.5 : lengthScore * 0.6;
+  // 回答长度质量分：Sigmoid 映射到 0-100
+  // L(x) = 100 / (1 + e^{-0.015·(x - 120)})
+  const lengthScore = Math.round(100 / (1 + Math.exp(-0.015 * (charCount - 120))));
+
+  // IQ 关键词命中加权（最多计2次命中防堆砌）
+  let iqKeyScore = 0, iqMaxPossible = 0;
+  for (const [keyword, weight] of Object.entries(IQ_KEYWORDS)) {
+    const count = (normalized.match(new RegExp(keyword, 'g')) || []).length;
+    iqKeyScore += Math.min(count, 2) * weight;
+    iqMaxPossible += 2 * weight;
+  }
+  const iqKeyRatio = iqMaxPossible > 0 ? iqKeyScore / iqMaxPossible : 0;
+
+  // EQ 关键词命中加权
+  let eqKeyScore = 0, eqMaxPossible = 0;
+  for (const [keyword, weight] of Object.entries(EQ_KEYWORDS)) {
+    const count = (normalized.match(new RegExp(keyword, 'g')) || []).length;
+    eqKeyScore += Math.min(count, 2) * weight;
+    eqMaxPossible += 2 * weight;
+  }
+  const eqKeyRatio = eqMaxPossible > 0 ? eqKeyScore / eqMaxPossible : 0;
+
+  const ALPHA = 0.3, BETA = 0.7;
+  const diffBonus = 1 + (question.difficulty - 1) * 0.05; // 难度系数 1.0~1.2
+
+  const iqRaw = (ALPHA * lengthScore + BETA * iqKeyRatio * 100) * (question.dimension !== 'eq' ? 1.0 : 0.6);
+  const eqRaw = (ALPHA * lengthScore + BETA * eqKeyRatio * 100) * (question.dimension !== 'iq' ? 1.0 : 0.5);
 
   return {
-    iq: Math.min(100, Math.round(iqBase * 10)),
-    eq: Math.min(100, Math.round(eqBase * 10))
+    iq: Math.min(100, Math.round(iqRaw * diffBonus)),
+    eq: Math.min(100, Math.round(eqRaw * diffBonus))
   };
 }
 
