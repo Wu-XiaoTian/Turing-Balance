@@ -60,14 +60,18 @@ export async function handleAuthRequest(request: Request, forcedMode?: AuthMode)
     });
 
     if (result.error || !result.data) {
-      const status = result.error === '用户名或邮箱已存在。' ? 409 : 500;
-      return Response.json({ ok: false, mode: 'supabase', message: result.error ?? '注册失败。' }, { status });
+      const isDuplicate =
+        result.error.includes('已被注册') ||
+        result.error.includes('已被使用') ||
+        result.error === '用户名或邮箱已存在。';
+      const status = isDuplicate ? 409 : 500;
+      return Response.json({ ok: false, mode: 'supabase', message: result.error ?? '注册失败，请稍后重试。' }, { status });
     }
 
     const loginResult = await signInSupabaseUser({ email: body.email, password: body.password });
 
     if (loginResult.error || !loginResult.data) {
-      return Response.json({ ok: false, mode: 'supabase', message: loginResult.error ?? '自动登录失败。' }, { status: 500 });
+      return Response.json({ ok: false, mode: 'supabase', message: loginResult.error ?? '注册成功，但自动登录失败，请前往登录页登录。' }, { status: 401 });
     }
 
     return Response.json({

@@ -41,6 +41,65 @@ export interface SupabaseAuthSession {
   user: SupabaseSessionUser;
 }
 
+/**
+ * 解析 Supabase 错误响应 JSON，返回用户可读的中文错误信息。
+ * 处理注册错误（admin API）和登录错误（token API）两种格式：
+ *   {"code":422,"error_code":"email_exists","msg":"..."}
+ *   {"error":"invalid_grant","error_description":"Invalid login credentials"}
+ */
+function parseSupabaseError(errorText: string): string {
+  try {
+    const parsed = JSON.parse(errorText);
+    const code: string | undefined = parsed.error_code ?? parsed.code;
+    const msg: string | undefined = parsed.msg;
+    const errorDescription: string | undefined = parsed.error_description;
+    const errorField: string | undefined = parsed.error;
+
+    // ---- 注册相关错误（admin API） ----
+    if (code === 'email_exists' || msg?.includes?.('already been registered')) {
+      return '该邮箱已被注册，请直接登录。';
+    }
+    if (code === 'user_exists' || code === 'username_exists' || msg?.includes?.('already exists')) {
+      return '该用户名已被使用，请换一个。';
+    }
+    if (code === 'weak_password' || msg?.includes?.('password')) {
+      return '密码强度不足，请使用更复杂的密码。';
+    }
+    if (code === 'validation_error') {
+      return '输入信息格式有误，请检查后重试。';
+    }
+
+    // ---- 登录相关错误（token API） ----
+    if (errorField === 'invalid_grant') {
+      if (errorDescription?.includes?.('Invalid login credentials')) {
+        return '邮箱/手机号或密码错误，请重新输入。';
+      }
+      if (errorDescription?.includes?.('Email not confirmed') || errorDescription?.includes?.('email_not_confirmed')) {
+        return '邮箱尚未验证，请先查收验证邮件。';
+      }
+      if (errorDescription?.includes?.('phone_not_confirmed')) {
+        return '手机号尚未验证。';
+      }
+      // 其他 grant 错误
+      if (errorDescription) {
+        return errorDescription;
+      }
+      return '邮箱/手机号或密码错误，请重新输入。';
+    }
+
+    // ---- 通用兜底：有 msg 字段则直接使用 ----
+    if (msg) {
+      return msg;
+    }
+    if (errorDescription) {
+      return errorDescription;
+    }
+  } catch {
+    // 不是 JSON，直接返回原文
+  }
+  return errorText;
+}
+
 export function hasSupabaseConfig() {
   return Boolean(supabaseUrl && supabaseAnonKey);
 }
@@ -140,7 +199,8 @@ export async function registerSupabaseUser(input: { username: string; email: str
   });
 
   if (authResult.error || !authResult.data?.user) {
-    return { data: null, error: authResult.error ?? '创建用户失败。' };
+    const readableError = authResult.error ? parseSupabaseError(authResult.error) : '创建用户失败，请稍后重试。';
+    return { data: null, error: readableError };
   }
 
   const profileBody: Record<string, unknown> = {
@@ -201,7 +261,8 @@ export async function signInSupabaseUser(input: { email: string; password: strin
   );
 
   if (authResult.error || !authResult.data) {
-    return { data: null, error: authResult.error ?? '登录失败。' };
+    const readableError = authResult.error ? parseSupabaseError(authResult.error) : '登录失败，请稍后重试。';
+    return { data: null, error: readableError };
   }
 
   return { data: authResult.data, error: null };
