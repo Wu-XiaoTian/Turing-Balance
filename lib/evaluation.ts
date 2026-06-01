@@ -129,13 +129,15 @@ function scoreAnswer(question: EvaluationQuestion, answer: string) {
 export function createEvaluationTask(
   userId: string,
   evaluationType: EvaluationType,
-  questions?: EvaluationQuestion[]
+  questions?: EvaluationQuestion[],
+  modelId?: AiModelId
 ): EvaluationTask {
   const selected = questions ?? pickQuestions(evaluationType);
   return {
     id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     userId,
     evaluationType,
+    modelId: modelId ?? DEFAULT_AI_MODEL,
     status: 'uninitialized',
     currentQuestionIndex: 0,
     questions: selected,
@@ -429,22 +431,48 @@ export function getReferenceAnswer(questionId: string): string {
   return templates[index];
 }
 
+// ========== 可用 AI 模型列表 (火山引擎 ARK 平台) ==========
+
+export const AVAILABLE_AI_MODELS = [
+  { id: 'deepseek-v4-flash-260425', label: 'DeepSeek V4 Flash', description: '快速响应，适合批量评估' },
+  { id: 'deepseek-v4-pro-260425', label: 'DeepSeek V4 Pro', description: '深度推理，最高质量回答' },
+  { id: 'deepseek-v3-2-251201', label: 'DeepSeek V3.2', description: '均衡性能，经典模型' },
+  { id: 'doubao-seed-2-0-code-preview-260215', label: '豆包 Seed 2.0 Code', description: '代码与逻辑推理优化' },
+  { id: 'doubao-seed-1-8-251228', label: '豆包 Seed 1.8', description: '稳定可靠的通用模型' },
+  { id: 'doubao-seed-2-0-lite-260428', label: '豆包 Seed 2.0 Lite', description: '轻量高效，快速推理' },
+  { id: 'glm-4-7-251222', label: 'GLM-4 7B', description: '智谱轻量模型，性价比高' },
+] as const;
+
+export type AiModelId = (typeof AVAILABLE_AI_MODELS)[number]['id'];
+
+/** 默认使用的 AI 模型 */
+export const DEFAULT_AI_MODEL: AiModelId = 'deepseek-v4-pro-260425';
+
+/** 火山引擎 ARK API 基础地址 */
+const ARK_API_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
+
 /**
- * 调用真实 AI API 生成回答 (对应 UML: AIModelEngine - Process Question Text)
+ * 调用火山引擎 ARK API 生成 AI 回答 (对应 UML: AIModelEngine - Process Question Text)
  *
- * 使用 DeepSeek API (OpenAI 兼容格式)，从环境变量读取:
- *   NEXT_PUBLIC_AI_API_URL  - API 基础地址 (如 https://api.deepseek.com)
- *   NEXT_PUBLIC_AI_API_KEY  - API Key
+ * 通过 ARK 平台 (OpenAI 兼容格式) 调用多种模型，从环境变量读取:
+ *   NEXT_PUBLIC_AI_API_KEY  - ARK API Key (格式: ark-...)
+ *
+ * @param questionId   题目 ID，用于失败时降级到模板回答
+ * @param questionPrompt  题目提示词
+ * @param model  可选，指定 AI 模型 ID，默认使用 DEFAULT_AI_MODEL
  *
  * 失败时自动降级为模板回答。
  */
-export async function generateAiResponse(questionId: string, questionPrompt: string): Promise<string> {
-  const apiUrl = process.env.NEXT_PUBLIC_AI_API_URL ?? '';
+export async function generateAiResponse(
+  questionId: string,
+  questionPrompt: string,
+  model: AiModelId = DEFAULT_AI_MODEL
+): Promise<string> {
   const apiKey = process.env.NEXT_PUBLIC_AI_API_KEY ?? '';
 
-  // 如果没有配置 API，降级为模板
-  if (!apiUrl || !apiKey) {
-    console.warn('[AI] API 未配置，使用模板回答');
+  // 如果没有配置 API Key，降级为模板
+  if (!apiKey) {
+    console.warn('[AI] API Key 未配置，使用模板回答');
     return getReferenceAnswer(questionId);
   }
 
@@ -452,14 +480,14 @@ export async function generateAiResponse(questionId: string, questionPrompt: str
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 秒超时
 
-    const response = await fetch(`${apiUrl}/v1/chat/completions`, {
+    const response = await fetch(`${ARK_API_BASE}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model,
         messages: [
           {
             role: 'system',
@@ -480,7 +508,7 @@ export async function generateAiResponse(questionId: string, questionPrompt: str
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => '');
-      console.error(`[AI] API 请求失败 HTTP ${response.status}:`, errorText);
+      console.error(`[AI] ARK API 请求失败 HTTP ${response.status}:`, errorText);
       return getReferenceAnswer(questionId);
     }
 
@@ -493,11 +521,11 @@ export async function generateAiResponse(questionId: string, questionPrompt: str
       return content.trim();
     }
 
-    console.warn('[AI] API 返回空内容，使用模板回答');
+    console.warn('[AI] ARK API 返回空内容，使用模板回答');
     return getReferenceAnswer(questionId);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error('[AI] API 调用异常:', msg);
+    console.error('[AI] ARK API 调用异常:', msg);
     return getReferenceAnswer(questionId);
   }
 }
