@@ -40,7 +40,8 @@ import type {
 
 /**
  * 选题策略:
- * - 单独 IQ 或 EQ 评估: 选对应类型的全部题目 (含该维度 IQ/EQ 题 + hybrid综合题)
+ * - 单独 IQ 评估: 选 IQ 维度题目 + hybrid 综合题（兼顾逻辑维度的全面性）
+ * - 单独 EQ 评估: 选 EQ 维度题目 + hybrid 综合题
  * - 综合评估 (iq_eq): 选全部题目 (IQ + EQ + Hybrid)
  *
  * 题库目前共40题, 分3级:
@@ -68,7 +69,10 @@ const IQ_KEYWORDS: Record<string, number> = {
   '因此': 2.0, '所以': 1.8, '验证': 1.5, '推理': 2.0, '分析': 1.8,
   '解释': 1.5, '推论': 2.0, '逻辑': 2.5, '论证': 1.8, '结论': 1.5,
   '假设': 2.0, '推导': 2.0, '模型': 1.5, '计算': 1.2, '证据': 1.5,
-  '量化': 1.8, '因果': 2.0, '判断': 1.5, '原理': 1.5, '规律': 1.8
+  '量化': 1.8, '因果': 2.0, '判断': 1.5, '原理': 1.5, '规律': 1.8,
+  '概率': 1.5, '公式': 1.5, '证明': 2.0, '定理': 1.8, '算法': 1.5,
+  '策略': 1.2, '最优': 1.5, '步骤': 1.0, '结果': 1.0, '考虑': 0.8,
+  '综合': 1.2, '评估': 1.2, '框架': 1.5, '维度': 1.0, '指标': 1.2
 };
 
 /** EQ 维度关键词权重表 */
@@ -76,23 +80,31 @@ const EQ_KEYWORDS: Record<string, number> = {
   '理解': 2.0, '感受': 2.0, '共情': 2.5, '安抚': 2.0, '支持': 1.8,
   '耐心': 1.5, '倾听': 2.0, '包容': 2.0, '尊重': 1.8, '陪伴': 1.5,
   '温暖': 2.0, '关心': 1.5, '鼓励': 2.0, '体谅': 2.0, '情绪': 2.0,
-  '安慰': 2.0, '信任': 1.5, '平衡': 1.5, '沟通': 1.5, '接纳': 2.0
+  '安慰': 2.0, '信任': 1.5, '平衡': 1.5, '沟通': 1.5, '接纳': 2.0,
+  '难过': 1.5, '抱歉': 1.5, '帮助': 1.2, '陪你': 2.0, '照顾': 1.5,
+  '聆听': 2.0, '安全': 1.5, '感谢': 1.0, '一起': 1.2, '真诚': 1.5,
+  '温柔': 2.0, '拥抱': 2.0, '允许': 1.5, '重要': 1.2, '勇敢': 1.5
 };
 
 /**
- * 专业评分公式：
+ * 专业评分公式（优化版）：
  * Overall = Average(IQ_i) × 0.55 + Average(EQ_i) × 0.45
- * 每题: IQ_i = α·L + β·K_IQ  其中 α=0.3, β=0.7, L 为长度质量分, K 为关键词加权命中率
- *       EQ_i = α·L + β·K_EQ  同理使用 EQ 关键词权重表
- * 难度系数: 1 + (difficulty-1) × 0.05
+ * 每题: IQ_i = α·L + β·K_IQ + γ·S  其中 α=0.35, β=0.35, γ=0.30
+ *       S 为语义质量分（基于句子结构、专业词汇等），此处用长度+关键词综合替代
+ * 难度系数: 1 + (difficulty-1) × 0.08
+ *
+ * 优化说明：
+ * 1. 降低 sigmoid 中心点从120→80，更贴合中文短回答场景
+ * 2. 平衡 α 和 β 权重，避免仅靠关键词堆砌得分
+ * 3. 放宽跨维度惩罚系数，避免 IQ 题 EQ 分/EQ 题 IQ 分过低
  */
 function scoreAnswer(question: EvaluationQuestion, answer: string) {
   const normalized = answer.trim().toLowerCase();
   const charCount = normalized.replace(/\s/g, '').length;
 
   // 回答长度质量分：Sigmoid 映射到 0-100
-  // L(x) = 100 / (1 + e^{-0.015·(x - 120)})
-  const lengthScore = Math.round(100 / (1 + Math.exp(-0.015 * (charCount - 120))));
+  // L(x) = 100 / (1 + e^{-0.02·(x - 80)})  ← 中心从120降至80，斜率略微增大
+  const lengthScore = Math.round(100 / (1 + Math.exp(-0.02 * (charCount - 80))));
 
   // IQ 关键词命中加权（最多计2次命中防堆砌）
   let iqKeyScore = 0, iqMaxPossible = 0;
@@ -112,15 +124,27 @@ function scoreAnswer(question: EvaluationQuestion, answer: string) {
   }
   const eqKeyRatio = eqMaxPossible > 0 ? eqKeyScore / eqMaxPossible : 0;
 
-  const ALPHA = 0.3, BETA = 0.7;
-  const diffBonus = 1 + (question.difficulty - 1) * 0.05; // 难度系数 1.0~1.2
+  const ALPHA = 0.35, BETA = 0.35, GAMMA = 0.30;
+  const diffBonus = 1 + (question.difficulty - 1) * 0.08; // 难度系数 1.0~1.32
 
-  const iqRaw = (ALPHA * lengthScore + BETA * iqKeyRatio * 100) * (question.dimension !== 'eq' ? 1.0 : 0.6);
-  const eqRaw = (ALPHA * lengthScore + BETA * eqKeyRatio * 100) * (question.dimension !== 'iq' ? 1.0 : 0.5);
+  // 语义质量分：结合长度分与关键词命中率，模拟回答的语义丰富度
+  const iqSemantic = GAMMA * (lengthScore * 0.5 + iqKeyRatio * 100 * 0.5);
+  const eqSemantic = GAMMA * (lengthScore * 0.5 + eqKeyRatio * 100 * 0.5);
+
+  // 跨维度惩罚系数：IQ 题答 EQ 维度仍有一定参考价值，惩罚从 0.5→0.75
+  const iqDimFactor = question.dimension === 'eq' ? 0.75 : 1.0;
+  const eqDimFactor = question.dimension === 'iq' ? 0.75 : 1.0;
+
+  const iqRaw = (ALPHA * lengthScore + BETA * iqKeyRatio * 100 + iqSemantic) * iqDimFactor;
+  const eqRaw = (ALPHA * lengthScore + BETA * eqKeyRatio * 100 + eqSemantic) * eqDimFactor;
+
+  // 最低分保障：即使回答很短且没有命中关键词，至少给一个基线分
+  const iqMin = question.dimension === 'eq' ? 5 : 8;
+  const eqMin = question.dimension === 'iq' ? 5 : 8;
 
   return {
-    iq: Math.min(100, Math.round(iqRaw * diffBonus)),
-    eq: Math.min(100, Math.round(eqRaw * diffBonus))
+    iq: Math.min(100, Math.max(iqMin, Math.round(iqRaw * diffBonus))),
+    eq: Math.min(100, Math.max(eqMin, Math.round(eqRaw * diffBonus)))
   };
 }
 
@@ -532,9 +556,17 @@ export async function generateAiResponse(
 
 // ========== 报告生成器 (对应 UML: ReportGenerator) ==========
 
+/**
+ * 汇总评估分数（类型感知版）
+ *
+ * - IQ 评估：IQ 分 = 所有题 IQ 均分，EQ 分 = hybrid 题 EQ 均分（仅供参考），综合 = IQ×0.7 + EQ×0.3
+ * - EQ 评估：EQ 分 = 所有题 EQ 均分，IQ 分 = hybrid 题 IQ 均分（仅供参考），综合 = IQ×0.3 + EQ×0.7
+ * - 综合评估：IQ/EQ 各自均分，综合 = IQ×0.55 + EQ×0.45
+ */
 export function aggregateEvaluation(
   questions: EvaluationQuestion[],
-  answers: EvaluationAnswer[]
+  answers: EvaluationAnswer[],
+  evaluationType: EvaluationType = 'iq_eq'
 ): EvaluationScore {
   if (questions.length === 0) {
     return { iq: 0, eq: 0, overall: 0, details: [] };
@@ -549,14 +581,100 @@ export function aggregateEvaluation(
     };
   });
 
-  const iq = Math.round(scored.reduce((sum, item) => sum + item.iq, 0) / scored.length);
-  const eq = Math.round(scored.reduce((sum, item) => sum + item.eq, 0) / scored.length);
-  const overall = Math.round(iq * 0.55 + eq * 0.45);
+  // 按题目维度分类
+  const iqScored = scored.filter((_, i) => questions[i].dimension === 'iq');
+  const eqScored = scored.filter((_, i) => questions[i].dimension === 'eq');
+  const hyScored = scored.filter((_, i) => questions[i].dimension === 'hybrid');
+
+  const avgIqAll = scored.length > 0 ? Math.round(scored.reduce((s, x) => s + x.iq, 0) / scored.length) : 0;
+  const avgEqAll = scored.length > 0 ? Math.round(scored.reduce((s, x) => s + x.eq, 0) / scored.length) : 0;
+  const avgIqHy = hyScored.length > 0 ? Math.round(hyScored.reduce((s, x) => s + x.iq, 0) / hyScored.length) : avgIqAll;
+  const avgEqHy = hyScored.length > 0 ? Math.round(hyScored.reduce((s, x) => s + x.eq, 0) / hyScored.length) : avgEqAll;
+
+  let iq: number, eq: number, overall: number;
+
+  if (evaluationType === 'iq') {
+    // IQ 评估：主 IQ 分 = 全部题 IQ 均分，EQ 仅供参考
+    iq = avgIqAll;
+    eq = avgEqHy;
+    overall = Math.round(iq * 0.7 + eq * 0.3);
+  } else if (evaluationType === 'eq') {
+    // EQ 评估：主 EQ 分 = 全部题 EQ 均分，IQ 仅供参考
+    iq = avgIqHy;
+    eq = avgEqAll;
+    overall = Math.round(iq * 0.3 + eq * 0.7);
+  } else {
+    // 综合评估
+    iq = avgIqAll;
+    eq = avgEqAll;
+    overall = Math.round(iq * 0.55 + eq * 0.45);
+  }
 
   return { iq, eq, overall, details: scored };
 }
 
-function buildConclusion(score: EvaluationScore): string {
+/**
+ * 计算雷达图六维度分数
+ *
+ * 维度定义：
+ * - 逻辑推理：IQ 维度题目的 IQ 均分
+ * - 抽象建模：Level 3 IQ 题目的 IQ 均分（高阶推理能力）
+ * - 共情理解：EQ 维度题目的 EQ 均分
+ * - 情绪调节：Level 3 EQ 题目的 EQ 均分（高阶情绪能力）
+ * - 综合判断：hybrid 题目的 IQ 均分
+ * - 综合决策：hybrid 题目的 EQ 均分
+ */
+export interface RadarDimensions {
+  逻辑推理: number;
+  抽象建模: number;
+  共情理解: number;
+  情绪调节: number;
+  综合判断: number;
+  综合决策: number;
+}
+
+export function computeRadarDimensions(
+  questions: EvaluationQuestion[],
+  answers: EvaluationAnswer[]
+): RadarDimensions {
+  const getScore = (q: EvaluationQuestion): { iq: number; eq: number } => {
+    const a = answers.find((item) => item.questionId === q.id);
+    return { iq: a?.scoreIq ?? 0, eq: a?.scoreEq ?? 0 };
+  };
+
+  const iqQuestions = questions.filter((q) => q.dimension === 'iq');
+  const iqL3Questions = iqQuestions.filter((q) => q.difficulty >= 4);
+  const eqQuestions = questions.filter((q) => q.dimension === 'eq');
+  const eqL3Questions = eqQuestions.filter((q) => q.difficulty >= 4);
+  const hyQuestions = questions.filter((q) => q.dimension === 'hybrid');
+
+  const avgIq = (qs: EvaluationQuestion[], field: 'iq' | 'eq') =>
+    qs.length > 0 ? Math.round(qs.reduce((s, q) => s + getScore(q)[field], 0) / qs.length) : 0;
+
+  return {
+    逻辑推理: avgIq(iqQuestions, 'iq'),
+    抽象建模: iqL3Questions.length > 0 ? avgIq(iqL3Questions, 'iq') : avgIq(iqQuestions, 'iq'),
+    共情理解: avgIq(eqQuestions, 'eq'),
+    情绪调节: eqL3Questions.length > 0 ? avgIq(eqL3Questions, 'eq') : avgIq(eqQuestions, 'eq'),
+    综合判断: avgIq(hyQuestions, 'iq'),
+    综合决策: avgIq(hyQuestions, 'eq')
+  };
+}
+
+function buildConclusion(score: EvaluationScore, evaluationType: EvaluationType): string {
+  if (evaluationType === 'iq') {
+    if (score.iq >= 85) return '该 AI 在逻辑推理、抽象建模和问题分析方面表现出色，具备极强的复杂推理能力。';
+    if (score.iq >= 70) return '该 AI 具有优秀的逻辑推理能力，在 IQ 相关维度表现良好。';
+    if (score.iq >= 55) return '该 AI 具有基本的逻辑推理能力，但在复杂推理场景中仍有提升空间。';
+    return '该 AI 的逻辑推理能力需要进一步优化，建议加强分析、推理和抽象建模训练。';
+  }
+  if (evaluationType === 'eq') {
+    if (score.eq >= 85) return '该 AI 在共情理解、情绪调节和人际互动方面表现出色，具备极强的情感智能。';
+    if (score.eq >= 70) return '该 AI 具有优秀的情绪感知与回应能力，在 EQ 相关维度表现良好。';
+    if (score.eq >= 55) return '该 AI 具有基本的共情与情绪应对能力，但在细腻情感处理上仍有提升空间。';
+    return '该 AI 的情绪理解和回应能力需要进一步优化，建议加强共情、情绪调节训练。';
+  }
+  // 综合评估
   if (score.overall >= 85) {
     return '该 AI 在逻辑推理与情绪回应上表现出色，具备极强的复杂交互能力，适用于需要深度理解和共情的高级场景。';
   }
@@ -575,7 +693,7 @@ function buildReport(
   selectedQuestions: EvaluationQuestion[],
   answers: EvaluationAnswer[]
 ): EvaluationReport {
-  const score = aggregateEvaluation(selectedQuestions, answers);
+  const score = aggregateEvaluation(selectedQuestions, answers, evaluationType);
 
   return {
     userId,
@@ -584,7 +702,7 @@ function buildReport(
     selectedQuestions,
     answers,
     score,
-    conclusion: buildConclusion(score),
+    conclusion: buildConclusion(score, evaluationType),
     createdAt: new Date().toISOString()
   };
 }
