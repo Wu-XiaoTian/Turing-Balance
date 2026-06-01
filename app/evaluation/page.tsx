@@ -33,11 +33,13 @@ import {
   generateAiResponse,
   getReferenceAnswer,
   aggregateEvaluation,
+  computeRadarDimensions,
   createEvaluationLoopState,
   AVAILABLE_AI_MODELS,
   DEFAULT_AI_MODEL
 } from '@/lib/evaluation';
 import type { EvaluationTask, EvaluationQuestion, EvaluationLoopState, AiModelId } from '@/lib/types';
+import type { RadarDimensions } from '@/lib/evaluation';
 
 type PagePhase = 'welcome' | 'select-type' | 'evaluating' | 'finalizing' | 'result';
 
@@ -55,6 +57,7 @@ export default function EvaluationPage() {
     score: { iq: number; eq: number; overall: number; details?: { questionId: string; iq: number; eq: number }[] };
     conclusion: string;
     answers: { questionId: string; answer: string }[];
+    radar: RadarDimensions;
   } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -155,23 +158,44 @@ export default function EvaluationPage() {
 
     // 汇总分数 (对应 UML: ScoringEngine - Calculate Overall Score)
     setTimeout(() => {
-      const score = aggregateEvaluation(finalized.questions, finalized.answers);
+      const score = aggregateEvaluation(finalized.questions, finalized.answers, finalized.evaluationType);
+      const radar = computeRadarDimensions(finalized.questions, finalized.answers);
       const completed = markTaskCompleted(finalized);
       setTask(completed);
 
-      const conclusion =
-        score.overall >= 85
+      const evaluationType = finalized.evaluationType;
+      let conclusion: string;
+      if (evaluationType === 'iq') {
+        conclusion = score.iq >= 85
+          ? '该 AI 在逻辑推理、抽象建模和问题分析方面表现出色，具备极强的复杂推理能力。'
+          : score.iq >= 70
+            ? '该 AI 具有优秀的逻辑推理能力，在 IQ 相关维度表现良好。'
+            : score.iq >= 55
+              ? '该 AI 具有基本的逻辑推理能力，但在复杂推理场景中仍有提升空间。'
+              : '该 AI 的逻辑推理能力需要进一步优化，建议加强分析、推理和抽象建模训练。';
+      } else if (evaluationType === 'eq') {
+        conclusion = score.eq >= 85
+          ? '该 AI 在共情理解、情绪调节和人际互动方面表现出色，具备极强的情感智能。'
+          : score.eq >= 70
+            ? '该 AI 具有优秀的情绪感知与回应能力，在 EQ 相关维度表现良好。'
+            : score.eq >= 55
+              ? '该 AI 具有基本的共情与情绪应对能力，但在细腻情感处理上仍有提升空间。'
+              : '该 AI 的情绪理解和回应能力需要进一步优化，建议加强共情、情绪调节训练。';
+      } else {
+        conclusion = score.overall >= 85
           ? '该 AI 在逻辑推理与情绪回应上表现出色，具备极强的复杂交互能力。'
           : score.overall >= 70
             ? '该 AI 具有优秀的综合能力，在推理和情感维度表现均衡。'
             : score.overall >= 55
               ? '该 AI 具有可用的综合能力，但在某些维度仍有提升空间。'
               : '该 AI 需要进一步优化回答质量、稳定性与情绪表达。';
+      }
 
       setReport({
         score,
         conclusion,
-        answers: completed.answers
+        answers: completed.answers,
+        radar
       });
       setPhase('result');
     }, 1500);
@@ -427,58 +451,58 @@ export default function EvaluationPage() {
 
   // 评估结果
   if (phase === 'result' && report) {
+    const evalType = task?.evaluationType ?? 'iq_eq';
+    const isIq = evalType === 'iq';
+    const isEq = evalType === 'eq';
+    const isBoth = evalType === 'iq_eq';
+
+    // 决定显示哪些仪表盘
+    const gauges: { label: string; value: number; color: string; desc: string }[] = [];
+    if (isIq || isBoth) {
+      gauges.push({ label: '智商 IQ', value: report.score.iq, color: '#38bdf8', desc: '逻辑推理·抽象分析能力' });
+    }
+    if (isEq || isBoth) {
+      gauges.push({ label: '情商 EQ', value: report.score.eq, color: '#f59e0b', desc: '共情理解·情绪调节能力' });
+    }
+    if (isBoth) {
+      gauges.push({ label: '综合评分', value: report.score.overall, color: '#22c55e', desc: '加权综合表现' });
+    } else {
+      // 纯 IQ 或纯 EQ 显示综合评分（以主维度加权）
+      gauges.push({ label: '综合评分', value: report.score.overall, color: '#22c55e', desc: isIq ? 'IQ 加权综合' : 'EQ 加权综合' });
+    }
+
+    const headerChip = isIq ? '🧠 IQ 评估' : isEq ? '❤️ EQ 评估' : '⚖️ 综合评估';
+    const headerDesc = isIq
+      ? `评估已完成，以下为 AI 的智商评估报告${task?.modelId ? ` · 模型: ${AVAILABLE_AI_MODELS.find(m => m.id === task.modelId)?.label ?? task.modelId}` : ''}`
+      : isEq
+        ? `评估已完成，以下为 AI 的情商评估报告${task?.modelId ? ` · 模型: ${AVAILABLE_AI_MODELS.find(m => m.id === task.modelId)?.label ?? task.modelId}` : ''}`
+        : `评估已完成，以下为 AI 的智商与情商综合评分${task?.modelId ? ` · 模型: ${AVAILABLE_AI_MODELS.find(m => m.id === task.modelId)?.label ?? task.modelId}` : ''}`;
+
     return (
       <main className="shell">
         <section className="page-head">
           <div>
             <h1>评估报告</h1>
-            <p>评估已完成，以下为 AI 的智商与情商综合评分{task?.modelId && <> · 模型: {AVAILABLE_AI_MODELS.find(m => m.id === task.modelId)?.label ?? task.modelId}</>}</p>
+            <p>{headerDesc}</p>
           </div>
           <span className="chip">
             {report.score.overall >= 80 ? '🌟 优秀' : report.score.overall >= 60 ? '👍 良好' : '📈 待提升'}
+            {' · '}{headerChip}
           </span>
         </section>
 
         {/* 环形仪表盘 */}
         <section className="panel stack" style={{ textAlign: 'center' }}>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 32, flexWrap: 'wrap', padding: '20px 0' }}>
-            {[
-              { label: '智商 IQ', value: report.score.iq, color: '#38bdf8', desc: '逻辑推理·抽象分析能力' },
-              { label: '情商 EQ', value: report.score.eq, color: '#f59e0b', desc: '共情理解·情绪调节能力' },
-              { label: '综合评分', value: report.score.overall, color: '#22c55e', desc: '加权综合表现' }
-            ].map((item) => (
+            {gauges.map((item) => (
               <GaugeRing key={item.label} label={item.label} value={item.value} color={item.color} desc={item.desc} />
             ))}
           </div>
 
-          {/* 雷达风格条形对比 */}
-          <div style={{ marginTop: 8 }}>
+          {/* SVG 雷达图 */}
+          <div style={{ marginTop: 16 }}>
             <h3 style={{ marginBottom: 16 }}>多维度能力雷达</h3>
-            {[
-              { label: '逻辑推理', value: report.score.details?.[0]?.iq ?? 0, max: 100 },
-              { label: '抽象建模', value: report.score.details?.[1]?.iq ?? 0, max: 100 },
-              { label: '共情理解', value: report.score.details?.[2]?.eq ?? report.score.details?.[0]?.eq ?? 0, max: 100 },
-              { label: '情绪调节', value: report.score.details?.[3]?.eq ?? report.score.details?.[1]?.eq ?? 0, max: 100 },
-              { label: '综合判断', value: report.score.iq, max: 100 },
-              { label: '综合决策', value: report.score.eq, max: 100 }
-            ].map((item) => (
-              <div key={item.label} style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.9rem' }}>
-                  <span>{item.label}</span>
-                  <span style={{ fontWeight: 700 }}>{item.value}</span>
-                </div>
-                <div style={{ width: '100%', height: 8, background: 'rgba(255,255,255,0.06)', borderRadius: 4, overflow: 'hidden' }}>
-                  <div style={{
-                    width: `${Math.min(item.value, 100)}%`,
-                    height: '100%',
-                    background: `linear-gradient(90deg, #38bdf8, #f59e0b, #22c55e)`,
-                    borderRadius: 4,
-                    transition: 'width 1.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                    boxShadow: '0 0 12px rgba(56,189,248,0.3)'
-                  }} />
-                </div>
-              </div>
-            ))}
+            <RadarChart radar={report.radar} />
           </div>
         </section>
 
@@ -570,6 +594,169 @@ function GaugeRing({ label, value, color, desc }: { label: string; value: number
       </svg>
       <div style={{ fontWeight: 700, fontSize: '0.95rem', color }}>{label}</div>
       <div className="muted" style={{ fontSize: '0.75rem' }}>{desc}</div>
+    </div>
+  );
+}
+
+// ========== SVG 雷达图组件 ==========
+function RadarChart({ radar }: { radar: RadarDimensions }) {
+  const dimensions = [
+    { key: '逻辑推理' as const, label: '逻辑推理' },
+    { key: '抽象建模' as const, label: '抽象建模' },
+    { key: '共情理解' as const, label: '共情理解' },
+    { key: '情绪调节' as const, label: '情绪调节' },
+    { key: '综合判断' as const, label: '综合判断' },
+    { key: '综合决策' as const, label: '综合决策' }
+  ];
+
+  const n = dimensions.length;
+  const size = 300;
+  const cx = size / 2;
+  const cy = size / 2;
+  const maxR = 120;
+  const levels = 5;
+
+  // 计算多边形顶点坐标
+  const angleSlice = (2 * Math.PI) / n;
+  const getPoint = (index: number, value: number) => {
+    const angle = angleSlice * index - Math.PI / 2; // 从顶部开始
+    const r = (value / 100) * maxR;
+    return {
+      x: cx + r * Math.cos(angle),
+      y: cy + r * Math.sin(angle)
+    };
+  };
+
+  // 背景网格多边形 (levels 层同心多边形)
+  const gridPolygons = Array.from({ length: levels }, (_, level) => {
+    const r = ((level + 1) / levels) * maxR;
+    const points = Array.from({ length: n }, (_, i) => {
+      const angle = angleSlice * i - Math.PI / 2;
+      return `${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`;
+    }).join(' ');
+    return points;
+  });
+
+  // 数据多边形
+  const dataPoints = dimensions.map((d, i) => getPoint(i, radar[d.key]));
+  const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(' ');
+
+  // 轴线
+  const axes = dimensions.map((_, i) => {
+    const end = getPoint(i, 100);
+    return { x1: cx, y1: cy, x2: end.x, y2: end.y };
+  });
+
+  // 颜色渐变 (蓝色 → 橙色 → 绿色)
+  const colors = ['#38bdf8', '#38bdf8', '#f59e0b', '#f59e0b', '#22c55e', '#22c55e'];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 0' }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <defs>
+          <radialGradient id="radar-fill" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="rgba(56,189,248,0.25)" />
+            <stop offset="50%" stopColor="rgba(245,158,11,0.15)" />
+            <stop offset="100%" stopColor="rgba(34,197,94,0.05)" />
+          </radialGradient>
+          <filter id="radar-glow">
+            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* 同心网格 */}
+        {gridPolygons.map((points, i) => (
+          <polygon
+            key={`grid-${i}`}
+            points={points}
+            fill="none"
+            stroke="rgba(255,255,255,0.08)"
+            strokeWidth={i === levels - 1 ? 1.5 : 0.5}
+          />
+        ))}
+
+        {/* 轴线 */}
+        {axes.map((axis, i) => (
+          <line
+            key={`axis-${i}`}
+            x1={axis.x1} y1={axis.y1} x2={axis.x2} y2={axis.y2}
+            stroke="rgba(255,255,255,0.1)"
+            strokeWidth={0.5}
+          />
+        ))}
+
+        {/* 数据填充区域 */}
+        <polygon
+          points={dataPolygon}
+          fill="url(#radar-fill)"
+          stroke="rgba(56,189,248,0.5)"
+          strokeWidth={2}
+          filter="url(#radar-glow)"
+          style={{ transition: 'all 1s cubic-bezier(0.4, 0, 0.2, 1)' }}
+        />
+
+        {/* 数据点 */}
+        {dataPoints.map((p, i) => (
+          <circle
+            key={`dot-${i}`}
+            cx={p.x} cy={p.y} r={5}
+            fill={colors[i]}
+            stroke="#fff"
+            strokeWidth={1.5}
+            filter="url(#radar-glow)"
+          >
+            <animate attributeName="r" from="0" to="5" dur="0.5s" begin={`${i * 0.1}s`} fill="freeze" />
+          </circle>
+        ))}
+
+        {/* 数值标签 */}
+        {dataPoints.map((p, i) => {
+          const angle = angleSlice * i - Math.PI / 2;
+          const val = radar[dimensions[i].key];
+          // 标签偏移，避免与数据点重叠
+          const labelR = maxR + 28;
+          const lx = cx + labelR * Math.cos(angle);
+          const ly = cy + labelR * Math.sin(angle);
+          return (
+            <text
+              key={`val-${i}`}
+              x={lx} y={ly}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill={colors[i]}
+              fontSize="13"
+              fontWeight="700"
+              style={{ textShadow: '0 0 8px rgba(0,0,0,0.6)' }}
+            >
+              {val}
+            </text>
+          );
+        })}
+
+        {/* 维度标签 */}
+        {dimensions.map((d, i) => {
+          const angle = angleSlice * i - Math.PI / 2;
+          const labelR = maxR + 46;
+          const lx = cx + labelR * Math.cos(angle);
+          const ly = cy + labelR * Math.sin(angle);
+          return (
+            <text
+              key={`label-${i}`}
+              x={lx} y={ly}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill="rgba(255,255,255,0.75)"
+              fontSize="12"
+            >
+              {d.label}
+            </text>
+          );
+        })}
+      </svg>
     </div>
   );
 }

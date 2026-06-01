@@ -24,7 +24,7 @@ export default function HomePage() {
       <section className="hero">
         <span className="eyebrow">✨ Turing Balance · 图灵天平</span>
         <h1 className="title">
-          衡量 AI 的智慧<br />与温度
+          衡量 AI 的智慧与温度
         </h1>
         <p className="lead">
           一个 AI 评估与匹配平台。覆盖<strong> AI 智商/情商评估</strong>、
@@ -40,8 +40,6 @@ export default function HomePage() {
         </div>
 
         <div className="nav" aria-label="quick links">
-          <Link className="nav-link" href="/evaluation">评估</Link>
-          <Link className="nav-link" href="/matching">匹配</Link>
           <Link className="nav-link" href="/auth?mode=login">登录</Link>
           <Link className="nav-link" href="/auth?mode=register">注册</Link>
         </div>
