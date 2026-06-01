@@ -610,7 +610,7 @@ function RadarChart({ radar }: { radar: RadarDimensions }) {
   ];
 
   const n = dimensions.length;
-  const size = 300;
+  const size = 360;
   const cx = size / 2;
   const cy = size / 2;
   const maxR = 120;
