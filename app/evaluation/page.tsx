@@ -33,9 +33,11 @@ import {
   generateAiResponse,
   getReferenceAnswer,
   aggregateEvaluation,
-  createEvaluationLoopState
+  createEvaluationLoopState,
+  AVAILABLE_AI_MODELS,
+  DEFAULT_AI_MODEL
 } from '@/lib/evaluation';
-import type { EvaluationTask, EvaluationQuestion, EvaluationLoopState } from '@/lib/types';
+import type { EvaluationTask, EvaluationQuestion, EvaluationLoopState, AiModelId } from '@/lib/types';
 
 type PagePhase = 'welcome' | 'select-type' | 'evaluating' | 'finalizing' | 'result';
 
@@ -43,6 +45,7 @@ export default function EvaluationPage() {
   const [session, setSession] = useState<AuthSessionState | null>(null);
   const [phase, setPhase] = useState<PagePhase>('welcome');
   const [task, setTask] = useState<EvaluationTask | null>(null);
+  const [selectedModel, setSelectedModel] = useState<AiModelId>(DEFAULT_AI_MODEL);
   const [loopState, setLoopState] = useState<EvaluationLoopState | null>(null);
   const [currentQuestion, setCurrentQuestion] = useState<EvaluationQuestion | null>(null);
   const [aiResponse, setAiResponse] = useState<string>('');
@@ -72,7 +75,7 @@ export default function EvaluationPage() {
     (type: 'iq' | 'eq' | 'iq_eq') => {
       if (!session?.user?.id) return;
 
-      const newTask = createEvaluationTask(session.user.id, type);
+      const newTask = createEvaluationTask(session.user.id, type, undefined, selectedModel);
       const inited = initializeTask(newTask);
       const ready = markTaskReady(inited);
       const started = markTaskEvaluating(ready);
@@ -81,7 +84,7 @@ export default function EvaluationPage() {
       setPhase('evaluating');
       setProgress(0);
     },
-    [session]
+    [session, selectedModel]
   );
 
   // 处理当前题目 -> 调用真实 AI API -> 评分循环
@@ -111,7 +114,7 @@ export default function EvaluationPage() {
     // 异步调用真实 AI API (对应 UML: AIModelEngine - Process Question Text)
     const runEvaluation = async () => {
       try {
-        const response = await generateAiResponse(question.id, question.prompt);
+        const response = await generateAiResponse(question.id, question.prompt, task.modelId);
         // 检查是否已被取消
         if (controller.signal.aborted) return;
 
@@ -224,6 +227,39 @@ export default function EvaluationPage() {
                 <span className="stat">用户: {session.user.username ?? session.user.email}</span>
               </div>
 
+              {/* AI 模型选择器 */}
+              <div>
+                <h2>选择测试模型</h2>
+                <p className="muted" style={{ marginBottom: 12 }}>选择要评估的 AI 模型，不同模型的表现可能差异显著</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {AVAILABLE_AI_MODELS.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => setSelectedModel(m.id)}
+                      style={{
+                        padding: '10px 16px',
+                        borderRadius: 8,
+                        border: selectedModel === m.id
+                          ? '2px solid var(--accent)'
+                          : '1px solid rgba(255,255,255,0.12)',
+                        background: selectedModel === m.id
+                          ? 'rgba(56,189,248,0.12)'
+                          : 'rgba(255,255,255,0.04)',
+                        color: selectedModel === m.id ? 'var(--accent)' : 'inherit',
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        transition: 'all 0.2s',
+                        textAlign: 'left'
+                      }}
+                      title={m.description}
+                    >
+                      <div style={{ fontWeight: 600 }}>{m.label}</div>
+                      <div style={{ fontSize: '0.75rem', opacity: 0.7, marginTop: 2 }}>{m.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <h2>选择评估类型</h2>
                 <div className="grid" style={{ marginTop: 16 }}>
@@ -270,6 +306,7 @@ export default function EvaluationPage() {
           </div>
           <span className="chip">
             {isAiThinking ? 'AI 思考中...' : '评分中...'} · 第 {task?.answers.length ?? 0}/{task?.questions.length ?? 0} 题
+            {task?.modelId && <> · {AVAILABLE_AI_MODELS.find(m => m.id === task.modelId)?.label ?? task.modelId}</>}
           </span>
         </section>
 
@@ -395,7 +432,7 @@ export default function EvaluationPage() {
         <section className="page-head">
           <div>
             <h1>评估报告</h1>
-            <p>评估已完成，以下为 AI 的智商与情商综合评分</p>
+            <p>评估已完成，以下为 AI 的智商与情商综合评分{task?.modelId && <> · 模型: {AVAILABLE_AI_MODELS.find(m => m.id === task.modelId)?.label ?? task.modelId}</>}</p>
           </div>
           <span className="chip">
             {report.score.overall >= 80 ? '🌟 优秀' : report.score.overall >= 60 ? '👍 良好' : '📈 待提升'}

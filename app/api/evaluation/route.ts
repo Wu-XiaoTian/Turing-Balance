@@ -1,5 +1,6 @@
 import { generateEvaluationReportFromSupabase, generateAiResponse, getNextQuestion, createEvaluationTask, markTaskEvaluating } from '@/lib/evaluation';
-import type { EvaluationType } from '@/lib/types';
+import type { AiModelId, EvaluationType } from '@/lib/types';
+import { DEFAULT_AI_MODEL } from '@/lib/evaluation';
 
 /**
  * GET: 获取评估结果或下一题
@@ -31,7 +32,8 @@ export async function GET(request: Request) {
   if (action === 'ai-answer') {
     const questionId = url.searchParams.get('questionId') ?? '';
     const prompt = url.searchParams.get('prompt') ?? '';
-    const response = await generateAiResponse(questionId, prompt);
+    const model = (url.searchParams.get('model') as AiModelId) ?? DEFAULT_AI_MODEL;
+    const response = await generateAiResponse(questionId, prompt, model);
     return Response.json({ ok: true, response });
   }
 
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     userId?: string;
     type?: EvaluationType;
+    modelId?: AiModelId;
     answers?: { questionId: string; answer: string }[];
     action?: 'start' | 'submit-answer' | 'complete';
     questionId?: string;
@@ -57,7 +60,7 @@ export async function POST(request: Request) {
 
   // 开始新的评估 (对应 UML: StartEvaluation)
   if (body.action === 'start') {
-    const task = createEvaluationTask(body.userId ?? 'demo-user', body.type ?? 'iq_eq');
+    const task = createEvaluationTask(body.userId ?? 'demo-user', body.type ?? 'iq_eq', undefined, body.modelId);
     const started = markTaskEvaluating(task);
     return Response.json({
       ok: true,

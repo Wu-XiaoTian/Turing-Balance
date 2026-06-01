@@ -26,6 +26,16 @@
  * ==========================================================================
  */
 
+// ========== AI 模型类型 ==========
+export type AiModelId =
+  | 'deepseek-v4-flash-260425'
+  | 'deepseek-v4-pro-260425'
+  | 'deepseek-v3-2-251201'
+  | 'doubao-seed-2-0-code-preview-260215'
+  | 'doubao-seed-1-8-251228'
+  | 'doubao-seed-2-0-lite-260428'
+  | 'glm-4-7-251222';
+
 // ========== 评估类型 ==========
 export type EvaluationType = 'iq' | 'eq' | 'iq_eq';
 
@@ -114,6 +124,7 @@ export interface EvaluationTask {
   id: string;
   userId: string;
   evaluationType: EvaluationType;
+  modelId?: AiModelId;
   status: TaskStatus;
   sessionId?: string;
   currentQuestionIndex: number;
