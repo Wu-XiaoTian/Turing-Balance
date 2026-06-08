@@ -470,6 +470,13 @@ export default function MatchingPage() {
             </article>
           ))}
 
+          {/* 操作 */}
+          <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button className="button" onClick={startMatching}>重新匹配</button>
+            <Link className="button-ghost" href="/evaluation">AI 评估</Link>
+            <Link className="button-ghost" href="/">返回首页</Link>
+          </div>
+
           {/* 折叠更多信息 */}
           <div style={{ textAlign: 'center', marginTop: 8 }}>
             <button
@@ -519,13 +526,6 @@ export default function MatchingPage() {
           <h2>匹配摘要</h2>
           <p style={{ lineHeight: 1.8 }}>{report.summary}</p>
         </section>
-
-        {/* 操作 */}
-        <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
-          <button className="button" onClick={startMatching}>重新匹配</button>
-          <Link className="button-ghost" href="/evaluation">AI 评估</Link>
-          <Link className="button-ghost" href="/">返回首页</Link>
-        </div>
       </main>
     );
   }
