@@ -482,16 +482,19 @@ const ARK_API_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
  * 通过 ARK 平台 (OpenAI 兼容格式) 调用多种模型，从环境变量读取:
  *   NEXT_PUBLIC_AI_API_KEY  - ARK API Key (格式: ark-...)
  *
- * @param questionId   题目 ID，用于失败时降级到模板回答
- * @param questionPrompt  题目提示词
- * @param model  可选，指定 AI 模型 ID，默认使用 DEFAULT_AI_MODEL
+ * @param questionId     题目 ID，用于失败时降级到模板回答
+ * @param questionPrompt 题目提示词
+ * @param model          可选，指定 AI 模型 ID，默认使用 DEFAULT_AI_MODEL
+ * @param onChunk        可选，流式回调，每收到一个 token 片段时调用
  *
+ * 内部使用流式请求 (stream: true) 以降低首字延迟。
  * 失败时自动降级为模板回答。
  */
 export async function generateAiResponse(
   questionId: string,
   questionPrompt: string,
-  model: AiModelId = DEFAULT_AI_MODEL
+  model: AiModelId = DEFAULT_AI_MODEL,
+  onChunk?: (chunk: string) => void
 ): Promise<string> {
   const apiKey = process.env.NEXT_PUBLIC_AI_API_KEY ?? '';
 
@@ -524,7 +527,8 @@ export async function generateAiResponse(
           }
         ],
         temperature: 0.7,
-        max_tokens: 1024
+        max_tokens: 512,
+        stream: true
       }),
       signal: controller.signal
     });
@@ -537,13 +541,49 @@ export async function generateAiResponse(
       return getReferenceAnswer(questionId);
     }
 
-    const data = await response.json() as {
-      choices?: { message?: { content?: string } }[];
-    };
+    // 解析 SSE 流式响应
+    const reader = response.body?.getReader();
+    if (!reader) {
+      console.warn('[AI] 响应体不支持流式读取，降级为模板回答');
+      return getReferenceAnswer(questionId);
+    }
 
-    const content = data.choices?.[0]?.message?.content;
-    if (content && content.trim().length > 0) {
-      return content.trim();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? ''; // 保留未完成的最后一行
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+
+        const jsonStr = trimmed.slice(5).trim();
+        if (jsonStr === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(jsonStr) as {
+            choices?: { delta?: { content?: string } }[];
+          };
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            fullText += content;
+            onChunk?.(content);
+          }
+        } catch {
+          // 忽略无法解析的行
+        }
+      }
+    }
+
+    if (fullText.trim().length > 0) {
+      return fullText.trim();
     }
 
     console.warn('[AI] ARK API 返回空内容，使用模板回答');

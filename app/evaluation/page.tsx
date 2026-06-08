@@ -117,11 +117,15 @@ export default function EvaluationPage() {
     // 异步调用真实 AI API (对应 UML: AIModelEngine - Process Question Text)
     const runEvaluation = async () => {
       try {
-        const response = await generateAiResponse(question.id, question.prompt, task.modelId);
+        const response = await generateAiResponse(question.id, question.prompt, task.modelId, (chunk) => {
+          // 流式回调：逐步显示 AI 回答
+          if (!controller.signal.aborted) {
+            setAiResponse((prev) => prev + chunk);
+          }
+        });
         // 检查是否已被取消
         if (controller.signal.aborted) return;
 
-        setAiResponse(response);
         setIsAiThinking(false);
 
         // 自动评分并记录 (对应 UML: ScoringEngine - Grade AI Response)
@@ -394,29 +398,35 @@ export default function EvaluationPage() {
             </div>
           )}
 
-          {/* AI 思考状态 */}
+          {/* AI 思考/流式回答状态 */}
           {isAiThinking && (
             <div className="panel" style={{
               background: 'rgba(245,158,11,0.06)',
               border: '1px solid rgba(245,158,11,0.2)'
             }}>
               <div className="stats">
-                <span className="stat">🤖 AI 模型正在处理问题...</span>
-                <span className="stat" style={{ animation: 'pulse 1.5s infinite' }}>⏳ 生成回答中</span>
+                <span className="stat">🤖 AI 模型正在生成回答...</span>
+                {!aiResponse && <span className="stat" style={{ animation: 'pulse 1.5s infinite' }}>⏳ 等待首字</span>}
+                {aiResponse && <span className="stat" style={{ color: 'var(--success)' }}>📝 流式接收中</span>}
               </div>
-              <div style={{ marginTop: 12, display: 'flex', gap: 6 }}>
-                {[0, 1, 2].map((i) => (
-                  <div key={i} style={{
-                    width: 12, height: 12, borderRadius: '50%',
-                    background: 'var(--accent)',
-                    animation: `bounce 1.4s ${i * 0.2}s infinite`
-                  }} />
-                ))}
-              </div>
+              {!aiResponse && (
+                <div style={{ marginTop: 12, display: 'flex', gap: 6 }}>
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} style={{
+                      width: 12, height: 12, borderRadius: '50%',
+                      background: 'var(--accent)',
+                      animation: `bounce 1.4s ${i * 0.2}s infinite`
+                    }} />
+                  ))}
+                </div>
+              )}
+              {aiResponse && (
+                <p style={{ marginTop: 12, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{aiResponse}<span style={{ animation: 'pulse 1s infinite' }}>▌</span></p>
+              )}
             </div>
           )}
 
-          {/* AI 回答 */}
+          {/* AI 回答完成 */}
           {aiResponse && !isAiThinking && (
             <div className="panel" style={{
               background: 'rgba(34,197,94,0.06)',
@@ -530,6 +540,20 @@ export default function EvaluationPage() {
           </div>
         </section>
 
+        {/* 操作 */}
+        <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
+          <button className="button" onClick={() => {
+            setPhase('welcome');
+            setTask(null);
+            setReport(null);
+            setAiResponse('');
+          }}>
+            重新评估
+          </button>
+          <Link className="button-ghost" href="/matching">华清池匹配</Link>
+          <Link className="button-ghost" href="/">返回首页</Link>
+        </div>
+
         {/* 题目明细 */}
         <section className="panel stack" style={{ marginTop: 16 }}>
           <h2>题目明细</h2>
@@ -559,20 +583,6 @@ export default function EvaluationPage() {
           <h2>评估结论</h2>
           <p style={{ fontSize: '1.1rem', lineHeight: 1.8 }}>{report.conclusion}</p>
         </section>
-
-        {/* 操作 */}
-        <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
-          <button className="button" onClick={() => {
-            setPhase('welcome');
-            setTask(null);
-            setReport(null);
-            setAiResponse('');
-          }}>
-            重新评估
-          </button>
-          <Link className="button-ghost" href="/matching">华清池匹配</Link>
-          <Link className="button-ghost" href="/">返回首页</Link>
-        </div>
       </main>
     );
   }
