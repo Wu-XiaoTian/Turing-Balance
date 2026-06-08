@@ -3,6 +3,7 @@ create table if not exists public.evaluation_sessions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles (id) on delete cascade,
   evaluation_type text not null,
+  ai_model_id text,                                -- 被评估的火山引擎 AI 模型 ID
   status text not null default 'uninitialized',
   score_iq integer not null default 0,
   score_eq integer not null default 0,

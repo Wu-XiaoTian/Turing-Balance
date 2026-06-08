@@ -416,6 +416,7 @@ export async function writeEvaluationSession(input: {
   scoreEq: number;
   scoreOverall: number;
   reportJson: unknown;
+  modelId?: string;
 }) {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
     return null;
@@ -427,6 +428,7 @@ export async function writeEvaluationSession(input: {
     body: JSON.stringify({
       user_id: input.userId,
       evaluation_type: input.evaluationType,
+      ai_model_id: input.modelId ?? null,
       status: input.status,
       score_iq: input.scoreIq,
       score_eq: input.scoreEq,
