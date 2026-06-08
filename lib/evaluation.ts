@@ -99,7 +99,7 @@ const EQ_KEYWORDS: Record<string, number> = {
  * 2. 平衡 α 和 β 权重，避免仅靠关键词堆砌得分
  * 3. 放宽跨维度惩罚系数，避免 IQ 题 EQ 分/EQ 题 IQ 分过低
  */
-function scoreAnswer(question: EvaluationQuestion, answer: string) {
+export function scoreAnswer(question: EvaluationQuestion, answer: string) {
   const normalized = answer.trim().toLowerCase();
   const charCount = normalized.replace(/\s/g, '').length;
 
@@ -489,7 +489,7 @@ const ARK_API_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
  *
  * 内部使用流式请求 (stream: true) 以降低首字延迟。
  * 内置双重超时保护:
- *   - 首字超时 10s: 若首个 token 在 10 秒内未到达，自动中止并降级为模板回答
+ *   - 首字超时 20s: 若首个 token 在 20 秒内未到达，自动中止并降级为模板回答
  *   - 总超时 30s: 整个请求最长等待 30 秒
  * 失败或超时时自动降级为模板回答，确保用户体验不中断。
  */
@@ -518,11 +518,11 @@ export async function generateAiResponse(
       controller.abort();
     }, 30000);
 
-    // 首字超时定时器：如果首字迟迟不来，提前降级（默认 10 秒）
+    // 首字超时定时器：如果首字迟迟不来，提前降级（默认 20 秒）
     let firstTokenTimeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-      console.warn(`[AI] 首字超时 (10000ms)，降级为模板回答`);
+      console.warn(`[AI] 首字超时 (20000ms)，降级为模板回答`);
       controller.abort();
-    }, 10000);
+    }, 20000);
 
     const response = await fetch(`${ARK_API_BASE}/chat/completions`, {
       method: 'POST',
@@ -629,6 +629,100 @@ export async function generateAiResponse(
     }
     return getReferenceAnswer(questionId);
   }
+}
+
+// ========== 并发批量 AI 回答 (并发评估优化) ==========
+
+/** 单题并发进度回调参数 */
+export interface QuestionProgress {
+  questionId: string;
+  status: 'waiting' | 'thinking' | 'streaming' | 'done' | 'timeout' | 'error';
+  chunk?: string;       // 流式内容片段 (status='streaming' 时)
+  answer?: string;      // 最终回答 (status='done' 时)
+  elapsedMs?: number;   // 已耗时
+}
+
+/**
+ * 并发调用 AI API 批量回答问题
+ *
+ * 使用信号量模式控制并发数，避免同时发起过多请求导致限流或超时。
+ * 每个问题的超时保护仍然独立生效（首字 20s / 总 30s）。
+ *
+ * @param questions     待回答的题目列表
+ * @param model         AI 模型 ID
+ * @param concurrency   并发数，默认 3
+ * @param onProgress    单题进度回调（可选，用于前端实时展示）
+ * @returns             按原顺序返回 { questionId, answer, score } 数组
+ */
+export async function generateAiResponsesConcurrent(
+  questions: EvaluationQuestion[],
+  model: AiModelId = DEFAULT_AI_MODEL,
+  concurrency = 3,
+  onProgress?: (progress: QuestionProgress) => void
+): Promise<{ questionId: string; answer: string; score: { iq: number; eq: number } }[]> {
+  const results = new Array<{ questionId: string; answer: string; score: { iq: number; eq: number } }>(questions.length);
+  let nextIndex = 0;
+  let completedCount = 0;
+
+  // 通知进度
+  const notify = (progress: QuestionProgress) => {
+    onProgress?.(progress);
+  };
+
+  // 处理单个题目
+  const processOne = async (question: EvaluationQuestion, index: number): Promise<void> => {
+    notify({ questionId: question.id, status: 'thinking', elapsedMs: 0 });
+
+    try {
+      const answer = await generateAiResponse(
+        question.id,
+        question.prompt,
+        model,
+        (chunk) => {
+          // 流式回调：通知前端
+          notify({ questionId: question.id, status: 'streaming', chunk });
+        }
+      );
+
+      const score = scoreAnswer(question, answer);
+      results[index] = { questionId: question.id, answer, score };
+      notify({ questionId: question.id, status: 'done', answer, elapsedMs: 0 });
+    } catch {
+      // generateAiResponse 内部已降级，但再包一层确保不抛异常
+      const fallback = getReferenceAnswer(question.id);
+      const score = scoreAnswer(question, fallback);
+      results[index] = { questionId: question.id, answer: fallback, score };
+      notify({ questionId: question.id, status: 'error', answer: fallback, elapsedMs: 0 });
+    }
+
+    completedCount++;
+
+    // 如果还有未开始的题目，启动下一个
+    if (nextIndex < questions.length) {
+      const currentIndex = nextIndex++;
+      const nextQuestion = questions[currentIndex];
+      notify({ questionId: nextQuestion.id, status: 'waiting', elapsedMs: 0 });
+      await processOne(nextQuestion, currentIndex);
+    }
+  };
+
+  // 初始化：标记所有题为 waiting，然后启动前 N 个并发任务
+  for (let i = 0; i < questions.length; i++) {
+    notify({ questionId: questions[i].id, status: 'waiting', elapsedMs: 0 });
+  }
+
+  const initialBatch = Math.min(concurrency, questions.length);
+  const tasks: Promise<void>[] = [];
+
+  for (let i = 0; i < initialBatch; i++) {
+    const index = nextIndex++;
+    notify({ questionId: questions[index].id, status: 'thinking', elapsedMs: 0 });
+    tasks.push(processOne(questions[index], index));
+  }
+
+  await Promise.all(tasks);
+
+  return results;
 }
 
 // ========== 报告生成器 (对应 UML: ReportGenerator) ==========
