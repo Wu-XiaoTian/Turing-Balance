@@ -27,10 +27,8 @@ import {
   markTaskCompleted,
   markTaskCancelled,
   markTaskAborted,
-  getNextQuestion,
-  recordAnswer,
-  shouldContinueLoop,
-  generateAiResponse,
+  scoreAnswer,
+  generateAiResponsesConcurrent,
   getReferenceAnswer,
   aggregateEvaluation,
   computeRadarDimensions,
@@ -38,49 +36,58 @@ import {
   AVAILABLE_AI_MODELS,
   DEFAULT_AI_MODEL
 } from '@/lib/evaluation';
+import type { QuestionProgress } from '@/lib/evaluation';
 import type { EvaluationTask, EvaluationQuestion, EvaluationLoopState, AiModelId } from '@/lib/types';
 import type { RadarDimensions } from '@/lib/evaluation';
 
 type PagePhase = 'welcome' | 'select-type' | 'evaluating' | 'finalizing' | 'result';
+
+/** 并发模式下每道题的卡片状态 */
+interface QuestionCardState {
+  question: EvaluationQuestion;
+  status: QuestionProgress['status'];
+  answer: string;
+  score?: { iq: number; eq: number };
+  firstTokenSec: number;
+}
+
+/** 并发数选项 */
+const CONCURRENCY_OPTIONS = [1, 2, 3, 5] as const;
+const DEFAULT_CONCURRENCY = 3;
 
 export default function EvaluationPage() {
   const [session, setSession] = useState<AuthSessionState | null>(null);
   const [phase, setPhase] = useState<PagePhase>('welcome');
   const [task, setTask] = useState<EvaluationTask | null>(null);
   const [selectedModel, setSelectedModel] = useState<AiModelId>(DEFAULT_AI_MODEL);
+  const [concurrency, setConcurrency] = useState<number>(DEFAULT_CONCURRENCY);
   const [loopState, setLoopState] = useState<EvaluationLoopState | null>(null);
-  const [currentQuestion, setCurrentQuestion] = useState<EvaluationQuestion | null>(null);
-  const [aiResponse, setAiResponse] = useState<string>('');
-  const [isAiThinking, setIsAiThinking] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [firstTokenWaitSec, setFirstTokenWaitSec] = useState(0); // 首字等待秒数
-  const firstTokenTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 并发模式：每道题的状态映射
+  const [questionCards, setQuestionCards] = useState<Record<string, QuestionCardState>>({});
+  const [completedCount, setCompletedCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+
   const [report, setReport] = useState<{
     score: { iq: number; eq: number; overall: number; details?: { questionId: string; iq: number; eq: number }[] };
     conclusion: string;
     answers: { questionId: string; answer: string }[];
     radar: RadarDimensions;
   } | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const firstTokenTimersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   useEffect(() => {
     setSession(readAuthSession());
   }, []);
 
-  const clearTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    if (firstTokenTimerRef.current) {
-      clearInterval(firstTokenTimerRef.current);
-      firstTokenTimerRef.current = null;
-    }
-    setFirstTokenWaitSec(0);
+  // 清理所有首字计时器
+  const clearAllFirstTokenTimers = useCallback(() => {
+    firstTokenTimersRef.current.forEach((timer) => clearInterval(timer));
+    firstTokenTimersRef.current.clear();
   }, []);
 
-  // 开始评估
+  // 开始评估 — 并发模式
   const startEvaluation = useCallback(
     (type: 'iq' | 'eq' | 'iq_eq') => {
       if (!session?.user?.id) return;
@@ -92,99 +99,132 @@ export default function EvaluationPage() {
       setTask(started);
       setLoopState(createEvaluationLoopState(started));
       setPhase('evaluating');
-      setProgress(0);
+
+      // 初始化所有题目的卡片状态
+      const cards: Record<string, QuestionCardState> = {};
+      for (const q of started.questions) {
+        cards[q.id] = {
+          question: q,
+          status: 'waiting',
+          answer: '',
+          firstTokenSec: 0,
+        };
+      }
+      setQuestionCards(cards);
+      setCompletedCount(0);
+      setTotalCount(started.questions.length);
     },
     [session, selectedModel]
   );
 
-  // 处理当前题目 -> 调用真实 AI API -> 评分循环
+  // 并发评估引擎 — 启动批量 AI 调用
   useEffect(() => {
-    if (phase !== 'evaluating' || !task || !shouldContinueLoop(task)) {
-      if (task && task.answers.length === task.questions.length && phase === 'evaluating') {
-        finishEvaluation(task);
-      }
-      return;
-    }
+    if (phase !== 'evaluating' || !task || task.questions.length === 0) return;
 
-    const { question } = getNextQuestion(task);
-    if (!question) {
-      finishEvaluation(task);
-      return;
-    }
-
-    setCurrentQuestion(question);
-    setProgress(Math.round((task.currentQuestionIndex / task.questions.length) * 100));
-    setIsAiThinking(true);
-    setAiResponse('');
-    setFirstTokenWaitSec(0);
-
-    // 启动首字等待计时器（用于 UI 展示）
-    firstTokenTimerRef.current = setInterval(() => {
-      setFirstTokenWaitSec((prev) => prev + 1);
-    }, 1000);
-
-    // 创建 AbortController 用于取消 API 请求
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // 异步调用真实 AI API (对应 UML: AIModelEngine - Process Question Text)
-    const runEvaluation = async () => {
-      try {
-        const response = await generateAiResponse(question.id, question.prompt, task.modelId, (chunk) => {
-          // 流式回调：逐步显示 AI 回答，同时首字到达时停止计时
-          if (!controller.signal.aborted) {
-            if (firstTokenTimerRef.current) {
-              clearInterval(firstTokenTimerRef.current);
-              firstTokenTimerRef.current = null;
+    const runConcurrent = async () => {
+      const results = await generateAiResponsesConcurrent(
+        task.questions,
+        task.modelId ?? DEFAULT_AI_MODEL,
+        concurrency,
+        (progress: QuestionProgress) => {
+          if (controller.signal.aborted) return;
+
+          setQuestionCards((prev) => {
+            const card = prev[progress.questionId];
+            if (!card) return prev;
+
+            const updated: QuestionCardState = {
+              ...card,
+              status: progress.status,
+            };
+
+            if (progress.chunk) {
+              updated.answer = card.answer + progress.chunk;
+              // 首字到达时清除该题的计时器
+              if (card.status === 'thinking' || card.status === 'waiting') {
+                const timer = firstTokenTimersRef.current.get(progress.questionId);
+                if (timer) {
+                  clearInterval(timer);
+                  firstTokenTimersRef.current.delete(progress.questionId);
+                }
+              }
             }
-            setAiResponse((prev) => prev + chunk);
+            if (progress.answer) {
+              updated.answer = progress.answer;
+            }
+
+            return { ...prev, [progress.questionId]: updated };
+          });
+
+          // 更新完成计数
+          if (progress.status === 'done' || progress.status === 'timeout' || progress.status === 'error') {
+            setCompletedCount((c) => c + 1);
           }
-        });
-        // 检查是否已被取消
-        if (controller.signal.aborted) return;
 
-        // 停止首字计时器
-        if (firstTokenTimerRef.current) {
-          clearInterval(firstTokenTimerRef.current);
-          firstTokenTimerRef.current = null;
+          // 启动首字计时器（thinking 阶段）
+          if (progress.status === 'thinking') {
+            const timer = setInterval(() => {
+              setQuestionCards((prev) => {
+                const c = prev[progress.questionId];
+                if (!c || c.status === 'done' || c.status === 'error' || c.status === 'timeout') {
+                  const t = firstTokenTimersRef.current.get(progress.questionId);
+                  if (t) { clearInterval(t); firstTokenTimersRef.current.delete(progress.questionId); }
+                  return prev;
+                }
+                return { ...prev, [progress.questionId]: { ...c, firstTokenSec: c.firstTokenSec + 1 } };
+              });
+            }, 1000);
+            firstTokenTimersRef.current.set(progress.questionId, timer);
+          }
         }
-        setIsAiThinking(false);
+      );
 
-        // 自动评分并记录 (对应 UML: ScoringEngine - Grade AI Response)
-        const scored = recordAnswer(task, response);
-        setTask(scored.task);
-        setCurrentQuestion(null);
-      } catch {
-        // API 调用失败，降级为模板回答
-        if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return;
 
-        // 停止首字计时器
-        if (firstTokenTimerRef.current) {
-          clearInterval(firstTokenTimerRef.current);
-          firstTokenTimerRef.current = null;
-        }
+      // 所有题目处理完毕，构建最终任务状态
+      setTask((prev) => {
+        if (!prev) return prev;
+        const answers = results.map((r) => ({
+          questionId: r.questionId,
+          answer: r.answer,
+          scoreIq: r.score.iq,
+          scoreEq: r.score.eq,
+        }));
+        return {
+          ...prev,
+          answers,
+          currentQuestionIndex: prev.questions.length,
+          updatedAt: new Date().toISOString(),
+        };
+      });
 
-        const fallback = getReferenceAnswer(question.id);
-        setAiResponse(fallback);
-        setIsAiThinking(false);
-
-        const scored = recordAnswer(task, fallback);
-        setTask(scored.task);
-        setCurrentQuestion(null);
+      // 触发最终评估
+      if (task) {
+        const finalTask: EvaluationTask = {
+          ...task,
+          answers: results.map((r) => ({
+            questionId: r.questionId,
+            answer: r.answer,
+            scoreIq: r.score.iq,
+            scoreEq: r.score.eq,
+          })),
+          currentQuestionIndex: task.questions.length,
+        };
+        finishEvaluation(finalTask);
       }
     };
 
-    runEvaluation();
+    runConcurrent();
 
     return () => {
       controller.abort();
       abortRef.current = null;
-      if (firstTokenTimerRef.current) {
-        clearInterval(firstTokenTimerRef.current);
-        firstTokenTimerRef.current = null;
-      }
+      clearAllFirstTokenTimers();
     };
-  }, [phase, task, task?.currentQuestionIndex, clearTimer]);
+  }, [phase, task?.id]); // 仅在进入 evaluating 阶段时触发一次
 
   // 完成评估 (对应 UML: Finalizing state)
   const finishEvaluation = useCallback((currentTask: EvaluationTask) => {
@@ -263,7 +303,7 @@ export default function EvaluationPage() {
 
   // 取消评估
   const cancelEvaluation = useCallback(() => {
-    clearTimer();
+    clearAllFirstTokenTimers();
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
@@ -272,29 +312,10 @@ export default function EvaluationPage() {
       setTask(markTaskCancelled(task));
     }
     setPhase('welcome');
-    setCurrentQuestion(null);
-    setAiResponse('');
-    setIsAiThinking(false);
+    setQuestionCards({});
+    setCompletedCount(0);
     setReport(null);
-  }, [task, clearTimer]);
-
-  // 跳过当前题目：强制中止 API 调用，降级为模板回答
-  const skipCurrentQuestion = useCallback(() => {
-    if (!task || !currentQuestion) return;
-    clearTimer();
-    if (abortRef.current) {
-      abortRef.current.abort();
-      abortRef.current = null;
-    }
-
-    const fallback = getReferenceAnswer(currentQuestion.id);
-    setAiResponse(fallback);
-    setIsAiThinking(false);
-
-    const scored = recordAnswer(task, fallback);
-    setTask(scored.task);
-    setCurrentQuestion(null);
-  }, [task, currentQuestion, clearTimer]);
+  }, [task, clearAllFirstTokenTimers]);
 
   // 获取分数颜色
   const scoreColor = (value: number) => {
@@ -362,6 +383,37 @@ export default function EvaluationPage() {
                 </div>
               </div>
 
+              {/* 并发数选择器 */}
+              <div>
+                <h2>并发数设置</h2>
+                <p className="muted" style={{ marginBottom: 12 }}>
+                  同时处理 N 道题目可大幅缩短总评估时间。注意：过高并发可能触发 API 限流
+                </p>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {CONCURRENCY_OPTIONS.map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => setConcurrency(n)}
+                      style={{
+                        padding: '8px 20px',
+                        borderRadius: 8,
+                        border: concurrency === n
+                          ? '2px solid var(--accent)'
+                          : '1px solid rgba(255,255,255,0.12)',
+                        background: concurrency === n
+                          ? 'rgba(56,189,248,0.12)'
+                          : 'rgba(255,255,255,0.04)',
+                        color: concurrency === n ? 'var(--accent)' : 'inherit',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {n} 道/批{n === 1 ? ' (串行)' : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <h2>选择评估类型</h2>
                 <div className="grid" style={{ marginTop: 16 }}>
@@ -397,118 +449,157 @@ export default function EvaluationPage() {
     );
   }
 
-  // 评估进行中
+  // 评估进行中 — 并发卡片视图
   if (phase === 'evaluating') {
+    const cards = Object.values(questionCards);
+    const doneCount = cards.filter((c) => c.status === 'done' || c.status === 'timeout' || c.status === 'error').length;
+    const progressPct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+    // 状态图标与颜色映射
+    const statusMeta: Record<string, { icon: string; color: string; label: string }> = {
+      waiting: { icon: '⏸', color: 'rgba(255,255,255,0.3)', label: '排队等待' },
+      thinking: { icon: '🤔', color: 'var(--accent)', label: '等待首字' },
+      streaming: { icon: '📝', color: 'var(--success)', label: '流式接收' },
+      done: { icon: '✅', color: 'var(--success)', label: '已完成' },
+      timeout: { icon: '⏰', color: 'var(--danger)', label: '超时降级' },
+      error: { icon: '⚠️', color: 'var(--danger)', label: '异常降级' },
+    };
+
     return (
       <main className="shell">
         <section className="page-head">
           <div>
-            <h1>评估进行中</h1>
-            <p>{task?.evaluationType === 'iq' ? '智商评估' : task?.evaluationType === 'eq' ? '情商评估' : '综合评估'}</p>
+            <h1>评估进行中（并发模式）</h1>
+            <p>
+              {task?.evaluationType === 'iq' ? '智商评估' : task?.evaluationType === 'eq' ? '情商评估' : '综合评估'}
+              &nbsp;· 并发数 {concurrency}
+              {task?.modelId && <> · {AVAILABLE_AI_MODELS.find(m => m.id === task.modelId)?.label ?? task.modelId}</>}
+            </p>
           </div>
           <span className="chip">
-            {isAiThinking ? 'AI 思考中...' : '评分中...'} · 第 {task?.answers.length ?? 0}/{task?.questions.length ?? 0} 题
-            {task?.modelId && <> · {AVAILABLE_AI_MODELS.find(m => m.id === task.modelId)?.label ?? task.modelId}</>}
+            ✅ {doneCount}/{totalCount} 已完成
+            {progressPct < 100 && <> · ⏳ {totalCount - doneCount} 处理中</>}
           </span>
         </section>
 
         {/* 进度条 */}
         <div style={{
-          width: '100%',
-          height: 8,
+          width: '100%', height: 8,
           background: 'rgba(255,255,255,0.1)',
-          borderRadius: 4,
-          marginBottom: 20,
-          overflow: 'hidden'
+          borderRadius: 4, marginBottom: 20, overflow: 'hidden'
         }}>
           <div style={{
-            width: `${progress}%`,
-            height: '100%',
+            width: `${progressPct}%`, height: '100%',
             background: 'linear-gradient(90deg, var(--accent), var(--accent-2))',
-            borderRadius: 4,
-            transition: 'width 0.5s ease'
+            borderRadius: 4, transition: 'width 0.5s ease'
           }} />
         </div>
 
-        <section className="panel stack">
-          {/* 当前题目 */}
-          {currentQuestion && (
-            <div>
-              <div className="stats" style={{ marginBottom: 12 }}>
-                <span className="stat">难度: {'⭐'.repeat(currentQuestion.difficulty)}</span>
-                <span className="stat">维度: {currentQuestion.dimension === 'iq' ? '逻辑' : currentQuestion.dimension === 'eq' ? '情感' : '综合'}</span>
-              </div>
-              <div className="panel" style={{
-                background: 'rgba(56,189,248,0.06)',
-                border: '1px solid rgba(56,189,248,0.2)'
-              }}>
-                <h3>{currentQuestion.title}</h3>
-                <p style={{ fontSize: '1.1rem', lineHeight: 1.8 }}>{currentQuestion.prompt}</p>
-              </div>
-            </div>
-          )}
+        {/* 题目卡片网格 — 响应式布局 */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: `repeat(${Math.min(concurrency, 3)}, 1fr)`,
+          gap: 12,
+          marginBottom: 16
+        }}>
+          {cards.map((card) => {
+            const meta = statusMeta[card.status] ?? statusMeta.waiting;
+            const isActive = card.status === 'thinking' || card.status === 'streaming';
+            const isDone = card.status === 'done' || card.status === 'timeout' || card.status === 'error';
 
-          {/* AI 思考/流式回答状态 */}
-          {isAiThinking && (
-            <div className="panel" style={{
-              background: 'rgba(245,158,11,0.06)',
-              border: '1px solid rgba(245,158,11,0.2)'
-            }}>
-              <div className="stats">
-                <span className="stat">🤖 AI 模型正在生成回答...</span>
-                {!aiResponse && (
-                  <>
-                    <span className="stat" style={{ animation: 'pulse 1.5s infinite', color: firstTokenWaitSec >= 8 ? 'var(--danger)' : 'var(--accent)' }}>
-                      ⏳ 等待首字 {firstTokenWaitSec > 0 ? `(${firstTokenWaitSec}s)` : ''} {firstTokenWaitSec >= 8 ? '— 即将自动跳过' : ''}
-                    </span>
-                  </>
-                )}
-                {aiResponse && <span className="stat" style={{ color: 'var(--success)' }}>📝 流式接收中</span>}
-              </div>
-              {!aiResponse && (
-                <div style={{ marginTop: 12, display: 'flex', gap: 6 }}>
-                  {[0, 1, 2].map((i) => (
-                    <div key={i} style={{
-                      width: 12, height: 12, borderRadius: '50%',
-                      background: firstTokenWaitSec >= 8 ? 'var(--danger)' : 'var(--accent)',
-                      animation: `bounce 1.4s ${i * 0.2}s infinite`
-                    }} />
-                  ))}
+            return (
+              <div
+                key={card.question.id}
+                className="panel"
+                style={{
+                  background: isActive ? 'rgba(56,189,248,0.05)' : isDone ? 'rgba(34,197,94,0.04)' : 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${isDone ? 'rgba(34,197,94,0.25)' : isActive ? 'rgba(56,189,248,0.25)' : 'rgba(255,255,255,0.08)'}`,
+                  padding: 12,
+                  minHeight: 140,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  transition: 'all 0.3s ease',
+                }}
+              >
+                {/* 题目标题 + 状态 */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.75rem', opacity: 0.6, marginBottom: 2 }}>
+                      {'⭐'.repeat(card.question.difficulty)} · {card.question.dimension === 'iq' ? '逻辑' : card.question.dimension === 'eq' ? '情感' : '综合'}
+                    </div>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {card.question.title}
+                    </div>
+                  </div>
+                  <span style={{
+                    fontSize: '0.7rem', padding: '2px 8px', borderRadius: 10,
+                    background: meta.color, color: '#000',
+                    whiteSpace: 'nowrap', marginLeft: 8, fontWeight: 600
+                  }}>
+                    {meta.icon} {meta.label}
+                  </span>
                 </div>
-              )}
-              {aiResponse && (
-                <p style={{ marginTop: 12, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{aiResponse}<span style={{ animation: 'pulse 1s infinite' }}>▌</span></p>
-              )}
-            </div>
-          )}
 
-          {/* AI 回答完成 */}
-          {aiResponse && !isAiThinking && (
-            <div className="panel" style={{
-              background: 'rgba(34,197,94,0.06)',
-              border: '1px solid rgba(34,197,94,0.2)'
-            }}>
-              <div className="stats" style={{ marginBottom: 8 }}>
-                <span className="stat">✅ AI 回答完成</span>
-                <span className="stat">📊 评分中...</span>
+                {/* 题目 prompt（截断） */}
+                <div style={{
+                  fontSize: '0.75rem', opacity: 0.55, lineHeight: 1.5,
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                  display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                  marginBottom: 8
+                }}>
+                  {card.question.prompt}
+                </div>
+
+                {/* 首字等待计时 */}
+                {card.status === 'thinking' && (
+                  <div style={{ fontSize: '0.75rem', color: card.firstTokenSec >= 15 ? 'var(--danger)' : 'var(--accent)', animation: 'pulse 1.5s infinite', marginBottom: 4 }}>
+                    ⏳ 等待首字 ({card.firstTokenSec}s){card.firstTokenSec >= 15 ? ' — 即将超时' : ''}
+                  </div>
+                )}
+
+                {/* 流式回答内容 */}
+                {(card.status === 'streaming' || card.status === 'done' || card.status === 'timeout' || card.status === 'error') && card.answer && (
+                  <div style={{
+                    flex: 1, fontSize: '0.8rem', lineHeight: 1.6,
+                    background: 'rgba(0,0,0,0.2)', borderRadius: 6,
+                    padding: '6px 10px', overflow: 'auto', maxHeight: 100,
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word'
+                  }}>
+                    {card.answer}
+                    {card.status === 'streaming' && <span style={{ animation: 'pulse 1s infinite' }}>▌</span>}
+                  </div>
+                )}
+
+                {/* 等待动画 */}
+                {card.status === 'waiting' && (
+                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: 'rgba(255,255,255,0.3)',
+                        animation: `bounce 1.4s ${i * 0.2}s infinite`
+                      }} />
+                    ))}
+                  </div>
+                )}
+                {card.status === 'thinking' && !card.answer && (
+                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: card.firstTokenSec >= 15 ? 'var(--danger)' : 'var(--accent)',
+                        animation: `bounce 1.4s ${i * 0.2}s infinite`
+                      }} />
+                    ))}
+                  </div>
+                )}
               </div>
-              <p style={{ lineHeight: 1.8 }}>{aiResponse}</p>
-            </div>
-          )}
-        </section>
+            );
+          })}
+        </div>
 
         {/* 操作按钮 */}
-        <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-          {isAiThinking && !aiResponse && (
-            <button
-              className="button"
-              onClick={skipCurrentQuestion}
-              style={{ background: 'var(--danger)', color: 'white' }}
-              title="跳过当前题目，使用模板回答代替"
-            >
-              ⏭ 跳过此题 (已等 {firstTokenWaitSec}s)
-            </button>
-          )}
+        <div style={{ display: 'flex', gap: 12 }}>
           <button className="button" onClick={cancelEvaluation} style={{ background: 'rgba(255,255,255,0.08)', color: 'inherit' }}>
             中止评估
           </button>
@@ -612,7 +703,8 @@ export default function EvaluationPage() {
             setPhase('welcome');
             setTask(null);
             setReport(null);
-            setAiResponse('');
+            setQuestionCards({});
+            setCompletedCount(0);
           }}>
             重新评估
           </button>
