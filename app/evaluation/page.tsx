@@ -36,8 +36,7 @@ import {
   computeRadarDimensions,
   createEvaluationLoopState,
   AVAILABLE_AI_MODELS,
-  DEFAULT_AI_MODEL,
-  generateEvaluationReportFromSupabase
+  DEFAULT_AI_MODEL
 } from '@/lib/evaluation';
 import type { EvaluationTask, EvaluationQuestion, EvaluationLoopState, AiModelId } from '@/lib/types';
 import type { RadarDimensions } from '@/lib/evaluation';
@@ -200,15 +199,25 @@ export default function EvaluationPage() {
       });
       setPhase('result');
 
-      // 同步评估分数到 AI 候选数据库 (带平均值计算)
+      // 通过服务端 API 同步评估分数到远程数据库 (客户端无法直接访问 service_role_key)
       if (currentTask.modelId && session?.user?.id) {
         try {
-          await generateEvaluationReportFromSupabase(
-            session.user.id,
-            finalized.evaluationType,
-            completed.answers,
-            { modelId: currentTask.modelId }
-          );
+          await fetch('/api/evaluation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'complete',
+              userId: session.user.id,
+              type: finalized.evaluationType,
+              modelId: currentTask.modelId,
+              answers: completed.answers.map((a) => ({
+                questionId: a.questionId,
+                answer: a.answer,
+                scoreIq: a.scoreIq ?? 0,
+                scoreEq: a.scoreEq ?? 0
+              }))
+            })
+          });
         } catch {
           // 同步失败不影响主流程
         }

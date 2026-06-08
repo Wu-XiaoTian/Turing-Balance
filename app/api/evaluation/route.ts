@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     userId?: string;
     type?: EvaluationType;
     modelId?: AiModelId;
-    answers?: { questionId: string; answer: string }[];
+    answers?: { questionId: string; answer: string; scoreIq?: number; scoreEq?: number }[];
     action?: 'start' | 'submit-answer' | 'complete';
     questionId?: string;
     answer?: string;
