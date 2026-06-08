@@ -488,7 +488,10 @@ const ARK_API_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
  * @param onChunk        可选，流式回调，每收到一个 token 片段时调用
  *
  * 内部使用流式请求 (stream: true) 以降低首字延迟。
- * 失败时自动降级为模板回答。
+ * 内置双重超时保护:
+ *   - 首字超时 10s: 若首个 token 在 10 秒内未到达，自动中止并降级为模板回答
+ *   - 总超时 30s: 整个请求最长等待 30 秒
+ * 失败或超时时自动降级为模板回答，确保用户体验不中断。
  */
 export async function generateAiResponse(
   questionId: string,
@@ -504,9 +507,22 @@ export async function generateAiResponse(
     return getReferenceAnswer(questionId);
   }
 
+  const startTime = Date.now();
+
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 秒超时
+
+    // 总超时定时器（整个请求的最大时限，默认 30 秒）
+    const totalTimeoutId = setTimeout(() => {
+      console.warn(`[AI] 总超时 (30000ms)，降级为模板回答`);
+      controller.abort();
+    }, 30000);
+
+    // 首字超时定时器：如果首字迟迟不来，提前降级（默认 10 秒）
+    let firstTokenTimeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      console.warn(`[AI] 首字超时 (10000ms)，降级为模板回答`);
+      controller.abort();
+    }, 10000);
 
     const response = await fetch(`${ARK_API_BASE}/chat/completions`, {
       method: 'POST',
@@ -519,7 +535,7 @@ export async function generateAiResponse(
         messages: [
           {
             role: 'system',
-            content: '你是一个正在接受 IQ/EQ 评估的 AI。请认真思考每一个问题，但必须用一句中文句子作答（不超过一句话，禁止分段或多句回答）。对于情商类问题要体现共情能力，对于智商类问题要展示推理能力，对于综合类问题要兼顾理性与情感。严格要求：只用一句话回答，不要换行、不要列举、不要分段。'
+            content: '你是一个正在接受 IQ/EQ 评估的 AI。请认真思考每一个问题，尽量用中文作答。对于情商类问题要体现共情能力，对于智商类问题要展示推理能力，对于综合类问题要兼顾理性与情感。严格要求：尽量用一句话回答，不要换行、不要列举。'
           },
           {
             role: 'user',
@@ -533,9 +549,11 @@ export async function generateAiResponse(
       signal: controller.signal
     });
 
-    clearTimeout(timeoutId);
+    // fetch 连接成功，清除总超时但保留首字超时
+    clearTimeout(totalTimeoutId);
 
     if (!response.ok) {
+      if (firstTokenTimeoutId) clearTimeout(firstTokenTimeoutId);
       const errorText = await response.text().catch(() => '');
       console.error(`[AI] ARK API 请求失败 HTTP ${response.status}:`, errorText);
       return getReferenceAnswer(questionId);
@@ -544,6 +562,7 @@ export async function generateAiResponse(
     // 解析 SSE 流式响应
     const reader = response.body?.getReader();
     if (!reader) {
+      if (firstTokenTimeoutId) clearTimeout(firstTokenTimeoutId);
       console.warn('[AI] 响应体不支持流式读取，降级为模板回答');
       return getReferenceAnswer(questionId);
     }
@@ -551,6 +570,7 @@ export async function generateAiResponse(
     const decoder = new TextDecoder();
     let fullText = '';
     let buffer = '';
+    let firstTokenReceived = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -573,6 +593,15 @@ export async function generateAiResponse(
           };
           const content = parsed.choices?.[0]?.delta?.content;
           if (content) {
+            // 首字到达，清除首字超时并记录延迟
+            if (!firstTokenReceived) {
+              firstTokenReceived = true;
+              if (firstTokenTimeoutId) {
+                clearTimeout(firstTokenTimeoutId);
+                firstTokenTimeoutId = null;
+              }
+              console.log(`[AI] 首字延迟: ${Date.now() - startTime}ms (模型: ${model})`);
+            }
             fullText += content;
             onChunk?.(content);
           }
@@ -582,6 +611,9 @@ export async function generateAiResponse(
       }
     }
 
+    // 清理（正常完成但无内容的情况）
+    if (firstTokenTimeoutId) clearTimeout(firstTokenTimeoutId);
+
     if (fullText.trim().length > 0) {
       return fullText.trim();
     }
@@ -590,7 +622,11 @@ export async function generateAiResponse(
     return getReferenceAnswer(questionId);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error('[AI] ARK API 调用异常:', msg);
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      console.warn('[AI] 请求被中止（首字超时/总超时/取消），降级为模板回答');
+    } else {
+      console.error('[AI] ARK API 调用异常:', msg);
+    }
     return getReferenceAnswer(questionId);
   }
 }

@@ -53,6 +53,8 @@ export default function EvaluationPage() {
   const [aiResponse, setAiResponse] = useState<string>('');
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [firstTokenWaitSec, setFirstTokenWaitSec] = useState(0); // 首字等待秒数
+  const firstTokenTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [report, setReport] = useState<{
     score: { iq: number; eq: number; overall: number; details?: { questionId: string; iq: number; eq: number }[] };
     conclusion: string;
@@ -71,6 +73,11 @@ export default function EvaluationPage() {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    if (firstTokenTimerRef.current) {
+      clearInterval(firstTokenTimerRef.current);
+      firstTokenTimerRef.current = null;
+    }
+    setFirstTokenWaitSec(0);
   }, []);
 
   // 开始评估
@@ -109,6 +116,12 @@ export default function EvaluationPage() {
     setProgress(Math.round((task.currentQuestionIndex / task.questions.length) * 100));
     setIsAiThinking(true);
     setAiResponse('');
+    setFirstTokenWaitSec(0);
+
+    // 启动首字等待计时器（用于 UI 展示）
+    firstTokenTimerRef.current = setInterval(() => {
+      setFirstTokenWaitSec((prev) => prev + 1);
+    }, 1000);
 
     // 创建 AbortController 用于取消 API 请求
     const controller = new AbortController();
@@ -118,14 +131,23 @@ export default function EvaluationPage() {
     const runEvaluation = async () => {
       try {
         const response = await generateAiResponse(question.id, question.prompt, task.modelId, (chunk) => {
-          // 流式回调：逐步显示 AI 回答
+          // 流式回调：逐步显示 AI 回答，同时首字到达时停止计时
           if (!controller.signal.aborted) {
+            if (firstTokenTimerRef.current) {
+              clearInterval(firstTokenTimerRef.current);
+              firstTokenTimerRef.current = null;
+            }
             setAiResponse((prev) => prev + chunk);
           }
         });
         // 检查是否已被取消
         if (controller.signal.aborted) return;
 
+        // 停止首字计时器
+        if (firstTokenTimerRef.current) {
+          clearInterval(firstTokenTimerRef.current);
+          firstTokenTimerRef.current = null;
+        }
         setIsAiThinking(false);
 
         // 自动评分并记录 (对应 UML: ScoringEngine - Grade AI Response)
@@ -135,6 +157,12 @@ export default function EvaluationPage() {
       } catch {
         // API 调用失败，降级为模板回答
         if (controller.signal.aborted) return;
+
+        // 停止首字计时器
+        if (firstTokenTimerRef.current) {
+          clearInterval(firstTokenTimerRef.current);
+          firstTokenTimerRef.current = null;
+        }
 
         const fallback = getReferenceAnswer(question.id);
         setAiResponse(fallback);
@@ -151,6 +179,10 @@ export default function EvaluationPage() {
     return () => {
       controller.abort();
       abortRef.current = null;
+      if (firstTokenTimerRef.current) {
+        clearInterval(firstTokenTimerRef.current);
+        firstTokenTimerRef.current = null;
+      }
     };
   }, [phase, task, task?.currentQuestionIndex, clearTimer]);
 
@@ -245,6 +277,24 @@ export default function EvaluationPage() {
     setIsAiThinking(false);
     setReport(null);
   }, [task, clearTimer]);
+
+  // 跳过当前题目：强制中止 API 调用，降级为模板回答
+  const skipCurrentQuestion = useCallback(() => {
+    if (!task || !currentQuestion) return;
+    clearTimer();
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+
+    const fallback = getReferenceAnswer(currentQuestion.id);
+    setAiResponse(fallback);
+    setIsAiThinking(false);
+
+    const scored = recordAnswer(task, fallback);
+    setTask(scored.task);
+    setCurrentQuestion(null);
+  }, [task, currentQuestion, clearTimer]);
 
   // 获取分数颜色
   const scoreColor = (value: number) => {
@@ -406,7 +456,13 @@ export default function EvaluationPage() {
             }}>
               <div className="stats">
                 <span className="stat">🤖 AI 模型正在生成回答...</span>
-                {!aiResponse && <span className="stat" style={{ animation: 'pulse 1.5s infinite' }}>⏳ 等待首字</span>}
+                {!aiResponse && (
+                  <>
+                    <span className="stat" style={{ animation: 'pulse 1.5s infinite', color: firstTokenWaitSec >= 8 ? 'var(--danger)' : 'var(--accent)' }}>
+                      ⏳ 等待首字 {firstTokenWaitSec > 0 ? `(${firstTokenWaitSec}s)` : ''} {firstTokenWaitSec >= 8 ? '— 即将自动跳过' : ''}
+                    </span>
+                  </>
+                )}
                 {aiResponse && <span className="stat" style={{ color: 'var(--success)' }}>📝 流式接收中</span>}
               </div>
               {!aiResponse && (
@@ -414,7 +470,7 @@ export default function EvaluationPage() {
                   {[0, 1, 2].map((i) => (
                     <div key={i} style={{
                       width: 12, height: 12, borderRadius: '50%',
-                      background: 'var(--accent)',
+                      background: firstTokenWaitSec >= 8 ? 'var(--danger)' : 'var(--accent)',
                       animation: `bounce 1.4s ${i * 0.2}s infinite`
                     }} />
                   ))}
@@ -443,7 +499,17 @@ export default function EvaluationPage() {
 
         {/* 操作按钮 */}
         <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-          <button className="button" onClick={cancelEvaluation} style={{ background: 'var(--danger)', color: 'white' }}>
+          {isAiThinking && !aiResponse && (
+            <button
+              className="button"
+              onClick={skipCurrentQuestion}
+              style={{ background: 'var(--danger)', color: 'white' }}
+              title="跳过当前题目，使用模板回答代替"
+            >
+              ⏭ 跳过此题 (已等 {firstTokenWaitSec}s)
+            </button>
+          )}
+          <button className="button" onClick={cancelEvaluation} style={{ background: 'rgba(255,255,255,0.08)', color: 'inherit' }}>
             中止评估
           </button>
         </div>
