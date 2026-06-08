@@ -763,7 +763,8 @@ export async function generateEvaluationReportFromSupabase(
     scoreIq: report.score.iq,
     scoreEq: report.score.eq,
     scoreOverall: report.score.overall,
-    reportJson: report
+    reportJson: report,
+    modelId
   });
 
   if (session) {
