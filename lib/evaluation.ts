@@ -519,7 +519,7 @@ export async function generateAiResponse(
         messages: [
           {
             role: 'system',
-            content: '你是一个正在接受 IQ/EQ 评估的 AI。请认真思考每一个问题，给出逻辑清晰、有深度的回答。对于情商类问题要体现共情能力，对于智商类问题要展示推理能力，对于综合类问题要兼顾理性与情感。请用中文回答。'
+            content: '你是一个正在接受 IQ/EQ 评估的 AI。请认真思考每一个问题，但必须用一句中文句子作答（不超过一句话，禁止分段或多句回答）。对于情商类问题要体现共情能力，对于智商类问题要展示推理能力，对于综合类问题要兼顾理性与情感。严格要求：只用一句话回答，不要换行、不要列举、不要分段。'
           },
           {
             role: 'user',
@@ -527,7 +527,7 @@ export async function generateAiResponse(
           }
         ],
         temperature: 0.7,
-        max_tokens: 512,
+        max_tokens: 256,
         stream: true
       }),
       signal: controller.signal
