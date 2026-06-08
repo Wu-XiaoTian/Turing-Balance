@@ -30,9 +30,12 @@ import {
   markMatchCompleted,
   buildUserProfileFromAnswers,
   rankCandidates,
-  calculateCompatibility
+  calculateCompatibility,
+  computeMatchingRadar,
+  type MatchingRadarDimensions
 } from '@/lib/matching';
 import { aiCandidates } from '@/lib/mock-data';
+import { readAiCandidates } from '@/lib/supabase';
 import type { QuestionnaireQuestion, MatchingTask, CandidateMatchResult, CandidateAI } from '@/lib/types';
 
 type PagePhase = 'welcome' | 'questionnaire' | 'processing' | 'result';
@@ -109,10 +112,22 @@ export default function MatchingPage() {
 
     await new Promise((r) => setTimeout(r, 600));
 
-    // 候选检索 (对应 UML: CandidateRetrieval)
+    // 候选检索 (对应 UML: CandidateRetrieval) — 优先从数据库加载
     const retrievalTask = markCandidateRetrieval(profilingTask);
     setTask(retrievalTask);
-    setProcessingStep(`找到 ${aiCandidates.length} 个候选 AI，正在进行匹配计算...`);
+
+    // 尝试从 Supabase 加载候选 AI，失败则使用本地 mock 数据
+    let candidates: CandidateAI[] = aiCandidates;
+    try {
+      const dbCandidates = await readAiCandidates();
+      if (dbCandidates.length > 0) {
+        candidates = dbCandidates;
+      }
+    } catch {
+      // 数据库不可用时使用本地数据
+    }
+
+    setProcessingStep(`找到 ${candidates.length} 个候选 AI，正在进行匹配计算...`);
 
     await new Promise((r) => setTimeout(r, 700));
 
@@ -123,7 +138,7 @@ export default function MatchingPage() {
 
     await new Promise((r) => setTimeout(r, 500));
 
-    const rankedCandidates = rankCandidates(profile);
+    const rankedCandidates = rankCandidates(profile, candidates);
 
     // 结果传送 (对应 UML: DeliveringResult)
     const deliveringTask = markDeliveringResult(matchingTask);
@@ -411,28 +426,37 @@ export default function MatchingPage() {
                 </div>
               </div>
 
-              {/* 维度分数 */}
-              <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
-                {[
-                  { label: '兴趣匹配', value: item.interestScore, max: 30, color: 'var(--accent-2)' },
-                  { label: '人格匹配', value: item.personalityScore, max: 28, color: 'var(--accent)' },
-                  { label: '情绪适配', value: item.emotionScore, max: 30, color: '#fb7185' },
-                  { label: '能力评分', value: item.capabilityScore, max: 12, color: 'var(--success)' }
-                ].map((dim) => (
-                  <div key={dim.label} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ width: 80, fontSize: '0.85rem', color: 'var(--muted)' }}>{dim.label}</span>
-                    <div style={{ flex: 1, height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden' }}>
-                      <div style={{
-                        width: `${(dim.value / dim.max) * 100}%`,
-                        height: '100%',
-                        background: dim.color,
-                        borderRadius: 4,
-                        transition: 'width 0.8s ease'
-                      }} />
+              {/* 雷达图 + 维度分数 */}
+              <div style={{ marginTop: 16, display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* SVG 雷达图 */}
+                <div style={{ flex: '0 0 auto' }}>
+                  <MatchingRadarChart radar={computeMatchingRadar(item)} size={180} />
+                </div>
+
+                {/* 维度分数柱状图 */}
+                <div style={{ flex: 1, minWidth: 200, display: 'grid', gap: 6 }}>
+                  {[
+                    { label: '兴趣匹配', value: item.interestScore, max: 25, color: 'var(--accent-2)' },
+                    { label: '人格匹配', value: item.personalityScore, max: 25, color: 'var(--accent)' },
+                    { label: '情绪适配', value: item.emotionScore, max: 25, color: '#fb7185' },
+                    { label: '能力评分', value: item.capabilityScore, max: 25, color: 'var(--success)' }
+                  ].map((dim) => (
+                    <div key={dim.label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ width: 70, fontSize: '0.82rem', color: 'var(--muted)' }}>{dim.label}</span>
+                      <div style={{ flex: 1, height: 7, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden' }}>
+                        <div style={{
+                          width: `${(dim.value / dim.max) * 100}%`,
+                          height: '100%',
+                          background: dim.color,
+                          borderRadius: 4,
+                          transition: 'width 0.8s ease'
+                        }} />
+                      </div>
+                      <span style={{ fontSize: '0.82rem', width: 28, textAlign: 'right', fontWeight: 600 }}>{dim.value}</span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--muted)', width: 20 }}>/25</span>
                     </div>
-                    <span style={{ fontSize: '0.85rem', width: 30, textAlign: 'right' }}>{dim.value}</span>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
 
               {/* 理由 */}
@@ -507,4 +531,126 @@ export default function MatchingPage() {
   }
 
   return null;
+}
+
+// ========== 匹配雷达图 SVG 组件 ==========
+
+function MatchingRadarChart({ radar, size = 180 }: { radar: MatchingRadarDimensions; size?: number }) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = size * 0.36;
+  const levels = 5;
+
+  const dimensions = Object.keys(radar) as (keyof MatchingRadarDimensions)[];
+  const dimCount = dimensions.length;
+  const angleSlice = (2 * Math.PI) / dimCount;
+
+  // 维度标签颜色
+  const dimColors: Record<string, string> = {
+    '兴趣匹配': '#38bdf8',
+    '人格匹配': '#f59e0b',
+    '情绪适配': '#fb7185',
+    '能力评分': '#22c55e',
+    '逻辑推理': '#a78bfa',
+    '共情能力': '#f472b6'
+  };
+
+  const getPoint = (index: number, value: number) => {
+    const angle = angleSlice * index - Math.PI / 2;
+    const r = (value / 100) * radius;
+    return {
+      x: cx + r * Math.cos(angle),
+      y: cy + r * Math.sin(angle)
+    };
+  };
+
+  const getLevelPoint = (index: number, level: number) => {
+    const angle = angleSlice * index - Math.PI / 2;
+    const r = (level / levels) * radius;
+    return {
+      x: cx + r * Math.cos(angle),
+      y: cy + r * Math.sin(angle)
+    };
+  };
+
+  const dataPoints = dimensions.map((dim, i) => getPoint(i, radar[dim]));
+  const polygonPoints = dataPoints.map((p) => `${p.x},${p.y}`).join(' ');
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      {/* 网格 */}
+      {Array.from({ length: levels }, (_, level) => {
+        const points = dimensions
+          .map((_, i) => getLevelPoint(i, level + 1))
+          .map((p) => `${p.x},${p.y}`)
+          .join(' ');
+        return (
+          <polygon
+            key={`grid-${level}`}
+            points={points}
+            fill="none"
+            stroke="rgba(255,255,255,0.08)"
+            strokeWidth={1}
+          />
+        );
+      })}
+
+      {/* 轴线 */}
+      {dimensions.map((_, i) => {
+        const point = getLevelPoint(i, levels);
+        return (
+          <line
+            key={`axis-${i}`}
+            x1={cx}
+            y1={cy}
+            x2={point.x}
+            y2={point.y}
+            stroke="rgba(255,255,255,0.08)"
+            strokeWidth={1}
+          />
+        );
+      })}
+
+      {/* 数据多边形 */}
+      <polygon
+        points={polygonPoints}
+        fill="rgba(56,189,248,0.12)"
+        stroke="rgba(56,189,248,0.6)"
+        strokeWidth={2}
+        strokeLinejoin="round"
+      />
+
+      {/* 数据点 */}
+      {dataPoints.map((p, i) => (
+        <circle
+          key={`dot-${i}`}
+          cx={p.x}
+          cy={p.y}
+          r={4}
+          fill={dimColors[dimensions[i]] ?? 'var(--accent)'}
+          stroke="#fff"
+          strokeWidth={1.5}
+        />
+      ))}
+
+      {/* 维度标签 */}
+      {dimensions.map((dim, i) => {
+        const labelPoint = getLevelPoint(i, levels + 1.2);
+        return (
+          <text
+            key={`label-${i}`}
+            x={labelPoint.x}
+            y={labelPoint.y}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill={dimColors[dim] ?? 'var(--muted)'}
+            fontSize={11}
+            fontWeight={600}
+          >
+            {dim}
+          </text>
+        );
+      })}
+    </svg>
+  );
 }

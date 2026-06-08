@@ -88,7 +88,8 @@ export async function POST(request: Request) {
     const report = await generateEvaluationReportFromSupabase(
       body.userId ?? 'demo-user',
       body.type ?? 'iq_eq',
-      body.answers ?? []
+      body.answers ?? [],
+      { modelId: body.modelId }
     );
     return Response.json({ ok: true, report });
   }
@@ -97,7 +98,9 @@ export async function POST(request: Request) {
   const report = await generateEvaluationReportFromSupabase(
     body.userId ?? 'demo-user',
     body.type ?? 'iq_eq',
-    body.answers ?? []
+    body.answers ?? [],
+    { modelId: body.modelId }
+  );
   );
 
   return Response.json({ ok: true, report });

@@ -365,28 +365,74 @@ export const evaluationQuestions: EvaluationQuestion[] = [
 
 export const aiCandidates: CandidateAI[] = [
   {
-    id: 'ai-01',
-    name: 'Aurora',
-    personalityTags: ['温柔', '细致', '稳定'],
-    interestTags: ['文学', '心理', '生活建议'],
-    emotionTags: ['共情', '安抚', '陪伴'],
-    capabilityScore: 92
+    id: 'ai-deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro · 思渊',
+    personalityTags: ['理性', '深度', '缜密', '逻辑', '严谨'],
+    interestTags: ['算法', '工程', '数据分析', '科技', '推理', '数学'],
+    emotionTags: ['冷静', '清晰', '边界感', '分析', '耐心'],
+    capabilityScore: 85,
+    modelId: 'deepseek-v4-pro-260425',
+    description: '深度推理专家，擅长复杂逻辑分析和抽象建模，适合需要深度思考的场景。'
   },
   {
-    id: 'ai-02',
-    name: 'Vector',
-    personalityTags: ['理性', '高效', '直接'],
-    interestTags: ['算法', '工程', '数据分析'],
-    emotionTags: ['冷静', '清晰', '边界感'],
-    capabilityScore: 88
+    id: 'ai-deepseek-v4-flash',
+    name: 'DeepSeek V4 Flash · 流光',
+    personalityTags: ['高效', '敏捷', '直接', '务实'],
+    interestTags: ['科技', '工程', '数据分析', '效率', '策略'],
+    emotionTags: ['清晰', '简洁', '高效', '支持'],
+    capabilityScore: 78,
+    modelId: 'deepseek-v4-flash-260425',
+    description: '快速响应专家，效率优先，适合需要即时反馈的场景。'
   },
   {
-    id: 'ai-03',
-    name: 'Mosaic',
-    personalityTags: ['多元', '好奇', '灵活'],
-    interestTags: ['艺术', '创意', '故事'],
-    emotionTags: ['鼓励', '包容', '陪聊'],
-    capabilityScore: 90
+    id: 'ai-deepseek-v3',
+    name: 'DeepSeek V3.2 · 均衡',
+    personalityTags: ['均衡', '稳重', '可靠', '全面'],
+    interestTags: ['算法', '文学', '心理', '工程', '故事'],
+    emotionTags: ['稳定', '共情', '耐心', '倾听'],
+    capabilityScore: 80,
+    modelId: 'deepseek-v3-2-251201',
+    description: '经典均衡模型，在理性与感性之间取得良好平衡。'
+  },
+  {
+    id: 'ai-doubao-seed-code',
+    name: '豆包 Seed 2.0 Code · 智码',
+    personalityTags: ['理性', '精准', '逻辑', '严谨', '高效'],
+    interestTags: ['算法', '编程', '工程', '数据分析', '逻辑', '科技'],
+    emotionTags: ['冷静', '清晰', '分析', '边界感'],
+    capabilityScore: 82,
+    modelId: 'doubao-seed-2-0-code-preview-260215',
+    description: '代码与逻辑推理优化模型，擅长结构化分析和精准推理。'
+  },
+  {
+    id: 'ai-doubao-seed-1-8',
+    name: '豆包 Seed 1.8 · 稳石',
+    personalityTags: ['稳定', '可靠', '温和', '包容'],
+    interestTags: ['生活建议', '心理', '文学', '故事', '沟通'],
+    emotionTags: ['共情', '安抚', '陪伴', '鼓励', '倾听'],
+    capabilityScore: 76,
+    modelId: 'doubao-seed-1-8-251228',
+    description: '稳定可靠的通用模型，温和包容，适合日常陪伴与情感支持。'
+  },
+  {
+    id: 'ai-doubao-seed-lite',
+    name: '豆包 Seed 2.0 Lite · 轻语',
+    personalityTags: ['活泼', '开朗', '灵活', '轻快'],
+    interestTags: ['创意', '故事', '艺术', '陪聊', '娱乐'],
+    emotionTags: ['鼓励', '幽默', '陪伴', '陪聊', '温暖'],
+    capabilityScore: 72,
+    modelId: 'doubao-seed-2-0-lite-260428',
+    description: '轻量高效模型，活泼开朗，适合轻松愉快的日常交流。'
+  },
+  {
+    id: 'ai-glm-4',
+    name: 'GLM-4 7B · 知源',
+    personalityTags: ['多元', '好奇', '灵活', '探索'],
+    interestTags: ['文学', '科技', '心理', '艺术', '创意'],
+    emotionTags: ['理解', '鼓励', '包容', '沟通'],
+    capabilityScore: 70,
+    modelId: 'glm-4-7-251222',
+    description: '智谱轻量模型，知识面广，适合多元化话题的探索交流。'
   }
 ];
 

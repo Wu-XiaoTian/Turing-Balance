@@ -23,7 +23,8 @@ import {
   readEvaluationQuestions,
   readOrFallbackUserProfile,
   writeEvaluationAnswers,
-  writeEvaluationSession
+  writeEvaluationSession,
+  syncEvaluationScoreToCandidate
 } from './supabase';
 import type {
   EvaluationAnswer,
@@ -724,9 +725,10 @@ export async function generateEvaluationReportFromSupabase(
   userId: string,
   evaluationType: EvaluationType,
   answers: EvaluationAnswer[] = sampleEvaluationAnswers as EvaluationAnswer[],
-  options: { allowFallback?: boolean } = {}
+  options: { allowFallback?: boolean; modelId?: AiModelId } = {}
 ) {
   const allowFallback = options.allowFallback ?? true;
+  const modelId = options.modelId;
   const profile = await readOrFallbackUserProfile(userId);
   const databaseQuestions = await readEvaluationQuestions(evaluationType);
   const selectedQuestions = databaseQuestions.length > 0 ? databaseQuestions : pickQuestions(evaluationType);
@@ -737,8 +739,21 @@ export async function generateEvaluationReportFromSupabase(
 
   const report = buildReport(userId, evaluationType, selectedQuestions, answers);
 
+  // 同步评估分数到 AI 候选的能力评分 (带平均值计算)
+  let syncedCapabilityScore: number | null = null;
+  if (modelId && profile) {
+    const syncResult = await syncEvaluationScoreToCandidate(
+      modelId,
+      report.score.iq,
+      report.score.eq
+    );
+    if (!syncResult.error) {
+      syncedCapabilityScore = syncResult.capabilityScore;
+    }
+  }
+
   if (!profile) {
-    return report;
+    return { ...report, syncedCapabilityScore };
   }
 
   const session = await writeEvaluationSession({
@@ -773,9 +788,10 @@ export async function generateEvaluationReportFromSupabase(
 
     return {
       ...report,
-      sessionId: session.id
+      sessionId: session.id,
+      syncedCapabilityScore
     };
   }
 
-  return report;
+  return { ...report, syncedCapabilityScore };
 }

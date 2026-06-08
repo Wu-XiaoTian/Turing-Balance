@@ -155,7 +155,17 @@ export interface CandidateAI {
   interestTags: string[];
   emotionTags: string[];
   capabilityScore: number;
+  modelId?: AiModelId;          // 关联的火山引擎 AI 模型 ID
   description?: string;
+  /** 雷达图各维度分数 (用于匹配结果展示) */
+  radarScores?: {
+    兴趣匹配: number;
+    人格匹配: number;
+    情绪适配: number;
+    能力评分: number;
+    逻辑推理: number;
+    共情能力: number;
+  };
 }
 
 // ========== 匹配模块 (对应 UML: MatchPreference, MatchResult) ==========
