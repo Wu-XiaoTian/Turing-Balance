@@ -101,7 +101,6 @@ export async function POST(request: Request) {
     body.answers ?? [],
     { modelId: body.modelId }
   );
-  );
 
   return Response.json({ ok: true, report });
 }
