@@ -344,6 +344,9 @@ export interface AiCandidateRow {
   interest_tags: string[];
   emotion_tags: string[];
   capability_score: number;
+  ai_model_id?: string;
+  description?: string;
+  evaluation_count?: number;
   active: boolean;
 }
 
@@ -365,7 +368,9 @@ function mapCandidate(row: AiCandidateRow): CandidateAI {
     personalityTags: row.personality_tags,
     interestTags: row.interest_tags,
     emotionTags: row.emotion_tags,
-    capabilityScore: row.capability_score
+    capabilityScore: row.capability_score,
+    modelId: (row.ai_model_id as CandidateAI['modelId']) ?? undefined,
+    description: row.description
   };
 }
 
@@ -392,7 +397,7 @@ export async function readAiCandidates() {
   }
 
   const { data, error } = await fetchJson<AiCandidateRow[]>(
-    `/rest/v1/ai_candidates?select=id,name,personality_tags,interest_tags,emotion_tags,capability_score,active&active=eq.true&order=capability_score.desc`,
+    `/rest/v1/ai_candidates?select=id,name,personality_tags,interest_tags,emotion_tags,capability_score,ai_model_id,description,active&active=eq.true&order=capability_score.desc`,
     { method: 'GET', headers: buildHeaders(supabaseAnonKey) }
   );
 
@@ -590,6 +595,8 @@ export async function upsertAiCandidate(input: {
   interestTags: string[];
   emotionTags: string[];
   capabilityScore: number;
+  modelId?: string;
+  description?: string;
   active?: boolean;
 }) {
   if (!supabaseUrl || !supabaseServiceRoleKey) {
@@ -606,9 +613,83 @@ export async function upsertAiCandidate(input: {
       interest_tags: JSON.stringify(input.interestTags),
       emotion_tags: JSON.stringify(input.emotionTags),
       capability_score: input.capabilityScore,
+      ai_model_id: input.modelId ?? null,
+      description: input.description ?? null,
       active: input.active ?? true
     })
   });
 
   return { error };
+}
+
+// ============ 评估分数同步到 AI 候选 (带平均值计算) ============
+
+/**
+ * 将评估结果同步到 AI 候选的能力评分。
+ * 如果候选已有评分，则与已有分数取平均值后入库。
+ * capabilityScore 采用加权平均：新分数权重 = 1, 历史分数权重 = evaluation_count
+ *
+ * @param modelId  火山引擎 AI 模型 ID (如 deepseek-v4-pro-260425)
+ * @param newIqScore  本次评估 IQ 分数
+ * @param newEqScore  本次评估 EQ 分数
+ * @returns 更新后的 capabilityScore (0-100)
+ */
+export async function syncEvaluationScoreToCandidate(
+  modelId: string,
+  newIqScore: number,
+  newEqScore: number
+): Promise<{ capabilityScore: number; error: string | null }> {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    // 无数据库时直接返回新分数
+    const rawScore = Math.round((newIqScore * 0.55 + newEqScore * 0.45));
+    return { capabilityScore: Math.min(100, Math.max(0, rawScore)), error: null };
+  }
+
+  // 综合能力分 = IQ×0.55 + EQ×0.45
+  const newCapability = Math.round(newIqScore * 0.55 + newEqScore * 0.45);
+
+  // 1. 查找该 modelId 对应的候选
+  const { data: candidates, error: readError } = await fetchJson<AiCandidateRow[]>(
+    `/rest/v1/ai_candidates?select=id,capability_score,evaluation_count&ai_model_id=eq.${encodeURIComponent(modelId)}&limit=1`,
+    { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+
+  if (readError || !candidates || candidates.length === 0) {
+    // 没有对应候选，直接返回新分数
+    return { capabilityScore: Math.min(100, Math.max(0, newCapability)), error: null };
+  }
+
+  const candidate = candidates[0];
+  const oldScore = candidate.capability_score ?? 0;
+  const oldCount = candidate.evaluation_count ?? 0;
+
+  // 2. 计算加权平均分
+  // 如果已有数据，新分数与历史分数取平均
+  let avgScore: number;
+  if (oldCount > 0 && oldScore > 0) {
+    // 加权平均: (oldScore * oldCount + newCapability) / (oldCount + 1)
+    avgScore = Math.round((oldScore * oldCount + newCapability) / (oldCount + 1));
+  } else {
+    avgScore = newCapability;
+  }
+  avgScore = Math.min(100, Math.max(0, avgScore));
+
+  // 3. 更新候选评分
+  const { error: updateError } = await fetchJson<unknown>(
+    `/rest/v1/ai_candidates?id=eq.${encodeURIComponent(candidate.id)}`,
+    {
+      method: 'PATCH',
+      headers: buildHeaders(supabaseServiceRoleKey),
+      body: JSON.stringify({
+        capability_score: avgScore,
+        evaluation_count: oldCount + 1
+      })
+    }
+  );
+
+  if (updateError) {
+    return { capabilityScore: avgScore, error: updateError };
+  }
+
+  return { capabilityScore: avgScore, error: null };
 }

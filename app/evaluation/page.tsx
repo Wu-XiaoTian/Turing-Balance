@@ -36,7 +36,8 @@ import {
   computeRadarDimensions,
   createEvaluationLoopState,
   AVAILABLE_AI_MODELS,
-  DEFAULT_AI_MODEL
+  DEFAULT_AI_MODEL,
+  generateEvaluationReportFromSupabase
 } from '@/lib/evaluation';
 import type { EvaluationTask, EvaluationQuestion, EvaluationLoopState, AiModelId } from '@/lib/types';
 import type { RadarDimensions } from '@/lib/evaluation';
@@ -157,7 +158,7 @@ export default function EvaluationPage() {
     setPhase('finalizing');
 
     // 汇总分数 (对应 UML: ScoringEngine - Calculate Overall Score)
-    setTimeout(() => {
+    setTimeout(async () => {
       const score = aggregateEvaluation(finalized.questions, finalized.answers, finalized.evaluationType);
       const radar = computeRadarDimensions(finalized.questions, finalized.answers);
       const completed = markTaskCompleted(finalized);
@@ -198,8 +199,22 @@ export default function EvaluationPage() {
         radar
       });
       setPhase('result');
+
+      // 同步评估分数到 AI 候选数据库 (带平均值计算)
+      if (currentTask.modelId && session?.user?.id) {
+        try {
+          await generateEvaluationReportFromSupabase(
+            session.user.id,
+            finalized.evaluationType,
+            completed.answers,
+            { modelId: currentTask.modelId }
+          );
+        } catch {
+          // 同步失败不影响主流程
+        }
+      }
     }, 1500);
-  }, []);
+  }, [session]);
 
   // 取消评估
   const cancelEvaluation = useCallback(() => {
