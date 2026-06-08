@@ -46,10 +46,10 @@ values
   ('evaluation_min_questions', '3', '每次评估最小题目数'),
   ('evaluation_max_questions', '10', '每次评估最大题目数'),
   ('evaluation_timeout_ms', '30000', 'AI 回答超时时间(毫秒)'),
-  ('matching_interest_weight', '30', '兴趣匹配权重'),
-  ('matching_personality_weight', '28', '人格匹配权重'),
-  ('matching_emotion_weight', '30', '情绪匹配权重'),
-  ('matching_capability_weight', '12', '能力评分权重'),
+  ('matching_interest_weight', '25', '兴趣匹配权重'),
+  ('matching_personality_weight', '25', '人格匹配权重'),
+  ('matching_emotion_weight', '25', '情绪匹配权重'),
+  ('matching_capability_weight', '25', '能力评分权重'),
   ('report_iq_weight', '0.55', '综合评估智商权重'),
   ('report_eq_weight', '0.45', '综合评估情商权重')
 on conflict (key) do update set
