@@ -1,6 +1,7 @@
 import { generateMatchingReportFromSupabase, rankCandidates, buildUserProfileFromAnswers } from '@/lib/matching';
+import { writeMatchingSession } from '@/lib/supabase';
 import { aiCandidates } from '@/lib/mock-data';
-import type { MatchPreference } from '@/lib/types';
+import type { MatchPreference, CandidateMatchResult } from '@/lib/types';
 
 /**
  * GET: 获取匹配结果或候选列表
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
     userId?: string;
     profile?: MatchPreference;
     answers?: Record<string, string[]>;
+    rankedCandidates?: CandidateMatchResult[];
     action?: 'submit-answers' | 'complete';
   };
 
@@ -44,6 +46,28 @@ export async function POST(request: Request) {
       rankedCandidates,
       status: rankedCandidates.length > 0 ? 'completed' : 'match_failed'
     });
+  }
+
+  // 持久化已完成的匹配结果到数据库 (客户端无权直接访问 service_role_key)
+  if (body.action === 'complete' && body.userId && body.profile && body.rankedCandidates) {
+    try {
+      const session = await writeMatchingSession({
+        userId: body.userId,
+        status: body.rankedCandidates.length > 0 ? 'completed' : 'match_failed',
+        profileJson: body.profile,
+        resultJson: {
+          profile: body.profile,
+          rankedCandidates: body.rankedCandidates,
+        }
+      });
+
+      if (session) {
+        return Response.json({ ok: true, sessionId: session.id });
+      }
+      return Response.json({ ok: false, error: '数据库写入返回空。' }, { status: 500 });
+    } catch (e) {
+      return Response.json({ ok: false, error: String(e) }, { status: 500 });
+    }
   }
 
   // 完成匹配并保存 (对应 UML: ReturnMatchingReport)
