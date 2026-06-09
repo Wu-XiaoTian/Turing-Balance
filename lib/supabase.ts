@@ -781,16 +781,29 @@ export async function adminReadMatchingSessions(statusFilter?: string) {
   });
 }
 
-/** 管理员获取所有题目 (含非激活) */
+/** 管理员获取所有题目 (含非激活)。DB 不足 30 题时自动从 mock 数据补充 */
 export async function adminReadAllQuestions() {
-  if (!supabaseUrl || !supabaseServiceRoleKey) return [];
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    // 无数据库时直接返回 mock 数据
+    const { evaluationQuestions } = await import('./mock-data');
+    return evaluationQuestions;
+  }
 
   const { data, error } = await fetchJson<EvaluationQuestionRow[]>(
     `/rest/v1/evaluation_questions?select=id,title,type,dimension,prompt,difficulty,active,sort_order&order=sort_order.asc`,
     { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) }
   );
 
-  if (error || !data) return [];
+  if (error || !data || data.length < 30) {
+    // DB 题目不足 30 题时，从 mock 数据补充（以 mock 为准，DB 已有的优先）
+    const { evaluationQuestions: mockQuestions } = await import('./mock-data');
+    if (!data || data.length === 0) return mockQuestions;
+
+    const dbMap = new Map(data.map((row) => [row.id, mapQuestion(row)]));
+    // 合并：mock 题目若 DB 中已有则用 DB 版本
+    return mockQuestions.map((mq) => dbMap.get(mq.id) ?? mq);
+  }
+
   return data.map(mapQuestion);
 }
 
