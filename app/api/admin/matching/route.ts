@@ -1,6 +1,6 @@
 /*
  * ==========================================================================
- * 管理员匹配管理 API
+ * 管理员匹配管理 API — 连接 Supabase 真实数据库
  * ==========================================================================
  * GET:  获取所有匹配任务列表、候选 AI 池
  * POST: 管理匹配任务 (更新状态、删除任务)、管理候选 AI
@@ -8,42 +8,42 @@
  */
 
 import { NextResponse } from 'next/server';
-import { aiCandidates } from '@/lib/mock-data';
-
-// 模拟匹配任务存储（内存中）
-const mockMatchTasks = [
-  { id: 'match-001', userId: 'u1', userName: '张三', status: 'completed', topMatch: '小薇 (温柔型)', topScore: 92, createdAt: '2026-05-25T08:00:00Z' },
-  { id: 'match-002', userId: 'u2', userName: '李四', status: 'completed', topMatch: '阿理 (逻辑型)', topScore: 88, createdAt: '2026-05-26T13:30:00Z' },
-  { id: 'match-003', userId: 'u5', userName: '孙七', status: 'matching', createdAt: '2026-05-27T10:00:00Z' },
-];
+import {
+  adminReadMatchingSessions,
+  adminReadAllCandidates,
+  adminDeleteCandidate,
+  adminDeleteMatchingSession,
+  adminUpdateMatchingSession,
+  upsertAiCandidate,
+} from '@/lib/supabase';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const action = url.searchParams.get('action');
 
-  // 获取候选 AI 列表
+  // 获取候选 AI 列表 (所有, 含非激活)
   if (action === 'candidates') {
-    return NextResponse.json({ ok: true, candidates: aiCandidates, total: aiCandidates.length });
+    const candidates = await adminReadAllCandidates();
+    return NextResponse.json({ ok: true, candidates, total: candidates.length });
   }
 
-  // 获取匹配任务列表
+  // 获取匹配任务列表 (真实数据)
   if (action === 'tasks') {
-    const status = url.searchParams.get('status');
-    let tasks = mockMatchTasks;
-    if (status) {
-      tasks = tasks.filter((t) => t.status === status);
-    }
+    const status = url.searchParams.get('status') ?? undefined;
+    const tasks = await adminReadMatchingSessions(status);
     return NextResponse.json({ ok: true, tasks, total: tasks.length });
   }
 
   // 默认返回概览
+  const allTasks = await adminReadMatchingSessions();
+  const allCandidates = await adminReadAllCandidates();
   return NextResponse.json({
     ok: true,
     overview: {
-      totalTasks: mockMatchTasks.length,
-      completedTasks: mockMatchTasks.filter((t) => t.status === 'completed').length,
-      activeTasks: mockMatchTasks.filter((t) => t.status === 'matching' || t.status === 'profiling').length,
-      totalCandidates: aiCandidates.length,
+      totalTasks: allTasks.length,
+      completedTasks: allTasks.filter((t) => t.status === 'completed').length,
+      activeTasks: allTasks.filter((t) => t.status === 'matching' || t.status === 'profiling').length,
+      totalCandidates: allCandidates.length,
     }
   });
 }
@@ -53,28 +53,66 @@ export async function POST(request: Request) {
     action?: string;
     taskId?: string;
     status?: string;
-    candidate?: { id: string; name: string; description: string; tags: string[]; personality: string[]; interests: string[]; emotionFocus: string[] };
+    candidate?: {
+      id: string; name: string; description: string;
+      personalityTags: string[]; interestTags: string[]; emotionTags: string[];
+      capabilityScore: number; modelId?: string;
+    };
   };
 
   // 更新任务状态
   if (body.action === 'update-task' && body.taskId) {
-    const task = mockMatchTasks.find((t) => t.id === body.taskId);
-    if (!task) {
-      return NextResponse.json({ ok: false, error: '任务不存在。' }, { status: 404 });
+    if (!body.status) {
+      return NextResponse.json({ ok: false, error: '需要提供状态。' }, { status: 400 });
     }
-    if (body.status) {
-      task.status = body.status;
+    const { error } = await adminUpdateMatchingSession(body.taskId, body.status);
+    if (error) {
+      return NextResponse.json({ ok: false, error }, { status: 500 });
     }
-    return NextResponse.json({ ok: true, task });
+    return NextResponse.json({ ok: true });
   }
 
   // 删除任务
   if (body.action === 'delete-task' && body.taskId) {
-    const idx = mockMatchTasks.findIndex((t) => t.id === body.taskId);
-    if (idx === -1) {
-      return NextResponse.json({ ok: false, error: '任务不存在。' }, { status: 404 });
+    const { error } = await adminDeleteMatchingSession(body.taskId);
+    if (error) {
+      return NextResponse.json({ ok: false, error }, { status: 500 });
     }
-    mockMatchTasks.splice(idx, 1);
+    return NextResponse.json({ ok: true });
+  }
+
+  // 添加/更新候选 AI
+  if (body.action === 'upsert-candidate' && body.candidate) {
+    const c = body.candidate;
+    if (!c.id || !c.name) {
+      return NextResponse.json({ ok: false, error: '候选AI的ID和名称不能为空。' }, { status: 400 });
+    }
+    const { error } = await upsertAiCandidate({
+      id: c.id,
+      name: c.name,
+      personalityTags: c.personalityTags,
+      interestTags: c.interestTags,
+      emotionTags: c.emotionTags,
+      capabilityScore: c.capabilityScore,
+      modelId: c.modelId,
+      description: c.description,
+    });
+    if (error) {
+      return NextResponse.json({ ok: false, error }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  // 删除候选 AI
+  if (body.action === 'delete-candidate') {
+    const candidateId = body.taskId; // 复用 taskId 字段传 candidateId
+    if (!candidateId) {
+      return NextResponse.json({ ok: false, error: '需要提供候选AI的ID。' }, { status: 400 });
+    }
+    const { error } = await adminDeleteCandidate(candidateId);
+    if (error) {
+      return NextResponse.json({ ok: false, error }, { status: 500 });
+    }
     return NextResponse.json({ ok: true });
   }
 

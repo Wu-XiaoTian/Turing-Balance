@@ -695,3 +695,188 @@ export async function syncEvaluationScoreToCandidate(
 
   return { capabilityScore: avgScore, error: null };
 }
+
+// ============ 管理员专用查询 (使用 service role key 绕过 RLS) ============
+
+/** 管理员获取所有评估会话 (含用户信息) */
+export async function adminReadEvaluationSessions(statusFilter?: string) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return [];
+
+  let query = `/rest/v1/evaluation_sessions?select=id,user_id,evaluation_type,ai_model_id,status,score_iq,score_eq,score_overall,created_at,updated_at&order=created_at.desc`;
+  if (statusFilter) {
+    query += `&status=eq.${encodeURIComponent(statusFilter)}`;
+  }
+
+  const { data: sessions, error } = await fetchJson<Array<{
+    id: string; user_id: string; evaluation_type: string; ai_model_id: string | null;
+    status: string; score_iq: number; score_eq: number; score_overall: number;
+    created_at: string; updated_at: string;
+  }>>(query, { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) });
+
+  if (error || !sessions) return [];
+
+  // 批量获取用户名
+  const userIds = [...new Set(sessions.map((s) => s.user_id))];
+  const { data: profiles } = await fetchJson<Array<{ id: string; username: string }>>(
+    `/rest/v1/profiles?select=id,username&id=in.(${userIds.map((id) => encodeURIComponent(id)).join(',')})`,
+    { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+  const userMap = new Map((profiles ?? []).map((p) => [p.id, p.username]));
+
+  return sessions.map((s) => ({
+    id: s.id,
+    userId: s.user_id,
+    userName: userMap.get(s.user_id) ?? '未知用户',
+    type: s.evaluation_type,
+    modelId: s.ai_model_id ?? '',
+    status: s.status,
+    score: (s.score_iq > 0 || s.score_eq > 0) ? { iq: s.score_iq, eq: s.score_eq, overall: s.score_overall } : undefined,
+    createdAt: s.created_at,
+  }));
+}
+
+/** 管理员获取所有匹配会话 (含用户信息) */
+export async function adminReadMatchingSessions(statusFilter?: string) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return [];
+
+  let query = `/rest/v1/matching_sessions?select=id,user_id,status,result_json,created_at,updated_at&order=created_at.desc`;
+  if (statusFilter) {
+    query += `&status=eq.${encodeURIComponent(statusFilter)}`;
+  }
+
+  const { data: sessions, error } = await fetchJson<Array<{
+    id: string; user_id: string; status: string; result_json: unknown;
+    created_at: string; updated_at: string;
+  }>>(query, { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) });
+
+  if (error || !sessions) return [];
+
+  // 批量获取用户名
+  const userIds = [...new Set(sessions.map((s) => s.user_id))];
+  const { data: profiles } = await fetchJson<Array<{ id: string; username: string }>>(
+    `/rest/v1/profiles?select=id,username&id=in.(${userIds.map((id) => encodeURIComponent(id)).join(',')})`,
+    { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+  const userMap = new Map((profiles ?? []).map((p) => [p.id, p.username]));
+
+  return sessions.map((s) => {
+    let topMatch: string | undefined;
+    let topScore: number | undefined;
+    if (s.result_json) {
+      const result = s.result_json as { rankedCandidates?: Array<{ candidate?: { name: string }; compatibility: number }> };
+      if (result.rankedCandidates && result.rankedCandidates.length > 0) {
+        topMatch = result.rankedCandidates[0].candidate?.name;
+        topScore = Math.round(result.rankedCandidates[0].compatibility);
+      }
+    }
+    return {
+      id: s.id,
+      userId: s.user_id,
+      userName: userMap.get(s.user_id) ?? '未知用户',
+      status: s.status,
+      topMatch,
+      topScore,
+      createdAt: s.created_at,
+    };
+  });
+}
+
+/** 管理员获取所有题目 (含非激活) */
+export async function adminReadAllQuestions() {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return [];
+
+  const { data, error } = await fetchJson<EvaluationQuestionRow[]>(
+    `/rest/v1/evaluation_questions?select=id,title,type,dimension,prompt,difficulty,active,sort_order&order=sort_order.asc`,
+    { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+
+  if (error || !data) return [];
+  return data.map(mapQuestion);
+}
+
+/** 管理员获取所有候选 AI (含非激活) */
+export async function adminReadAllCandidates() {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return [];
+
+  const { data, error } = await fetchJson<AiCandidateRow[]>(
+    `/rest/v1/ai_candidates?select=id,name,personality_tags,interest_tags,emotion_tags,capability_score,ai_model_id,description,active&order=capability_score.desc`,
+    { method: 'GET', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+
+  if (error || !data) return [];
+  return data.map(mapCandidate);
+}
+
+/** 管理员删除题目 */
+export async function adminDeleteQuestion(questionId: string) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return { error: '配置缺失' };
+
+  const { error } = await fetchJson<unknown>(
+    `/rest/v1/evaluation_questions?id=eq.${encodeURIComponent(questionId)}`,
+    { method: 'DELETE', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+  return { error };
+}
+
+/** 管理员删除候选 AI */
+export async function adminDeleteCandidate(candidateId: string) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return { error: '配置缺失' };
+
+  const { error } = await fetchJson<unknown>(
+    `/rest/v1/ai_candidates?id=eq.${encodeURIComponent(candidateId)}`,
+    { method: 'DELETE', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+  return { error };
+}
+
+/** 管理员删除评估会话 */
+export async function adminDeleteEvaluationSession(sessionId: string) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return { error: '配置缺失' };
+
+  const { error } = await fetchJson<unknown>(
+    `/rest/v1/evaluation_sessions?id=eq.${encodeURIComponent(sessionId)}`,
+    { method: 'DELETE', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+  return { error };
+}
+
+/** 管理员删除匹配会话 */
+export async function adminDeleteMatchingSession(sessionId: string) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return { error: '配置缺失' };
+
+  const { error } = await fetchJson<unknown>(
+    `/rest/v1/matching_sessions?id=eq.${encodeURIComponent(sessionId)}`,
+    { method: 'DELETE', headers: buildHeaders(supabaseServiceRoleKey) }
+  );
+  return { error };
+}
+
+/** 管理员更新评估任务状态 */
+export async function adminUpdateEvaluationSession(sessionId: string, status: string) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return { error: '配置缺失' };
+
+  const { error } = await fetchJson<unknown>(
+    `/rest/v1/evaluation_sessions?id=eq.${encodeURIComponent(sessionId)}`,
+    {
+      method: 'PATCH',
+      headers: buildHeaders(supabaseServiceRoleKey),
+      body: JSON.stringify({ status })
+    }
+  );
+  return { error };
+}
+
+/** 管理员更新匹配任务状态 */
+export async function adminUpdateMatchingSession(sessionId: string, status: string) {
+  if (!supabaseUrl || !supabaseServiceRoleKey) return { error: '配置缺失' };
+
+  const { error } = await fetchJson<unknown>(
+    `/rest/v1/matching_sessions?id=eq.${encodeURIComponent(sessionId)}`,
+    {
+      method: 'PATCH',
+      headers: buildHeaders(supabaseServiceRoleKey),
+      body: JSON.stringify({ status })
+    }
+  );
+  return { error };
+}
