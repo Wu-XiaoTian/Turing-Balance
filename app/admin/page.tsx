@@ -25,6 +25,8 @@ export default function AdminPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const isAdmin = session?.user?.role === 'administrator';
+
   useEffect(() => {
     const s = readAuthSession();
     setSession(s);
@@ -32,11 +34,9 @@ export default function AdminPage() {
       router.push('/auth?mode=login');
       return;
     }
-    if (s.user.role !== 'administrator') {
-      router.push('/auth?mode=login');
-      return;
+    if (s.user.role === 'administrator') {
+      loadParams();
     }
-    loadParams();
   }, [router]);
 
   async function loadParams() {
@@ -117,52 +117,60 @@ export default function AdminPage() {
       </section>
 
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        {/* 参数管理 */}
-        <section className="panel stack">
-          <h2>系统参数</h2>
-          <p className="muted">配置评估阈值、匹配权重、报告模板等系统参数。</p>
+        {/* 参数管理 — 仅管理员可见 */}
+        {isAdmin ? (
+          <section className="panel stack">
+            <h2>系统参数</h2>
+            <p className="muted">配置评估阈值、匹配权重、报告模板等系统参数。</p>
 
-          <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-            {params.length === 0 ? (
-              <p className="muted">暂无系统参数。</p>
-            ) : (
-              params.map((p) => (
-                <div key={p.key} className="panel" style={{
-                  padding: '12px 16px', marginBottom: 8,
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                }}>
-                  <div>
-                    <strong>{p.key}</strong>
-                    <p className="muted" style={{ fontSize: '0.85rem', margin: '2px 0' }}>
-                      值: {String(p.value)} {p.description ? `· ${p.description}` : ''}
-                    </p>
+            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+              {params.length === 0 ? (
+                <p className="muted">暂无系统参数。</p>
+              ) : (
+                params.map((p) => (
+                  <div key={p.key} className="panel" style={{
+                    padding: '12px 16px', marginBottom: 8,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                  }}>
+                    <div>
+                      <strong>{p.key}</strong>
+                      <p className="muted" style={{ fontSize: '0.85rem', margin: '2px 0' }}>
+                        值: {String(p.value)} {p.description ? `· ${p.description}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      className="button-ghost"
+                      style={{ color: 'var(--danger)', padding: '4px 12px', minHeight: 32 }}
+                      onClick={() => deleteParameter(p.key)}
+                    >
+                      删除
+                    </button>
                   </div>
-                  <button
-                    className="button-ghost"
-                    style={{ color: 'var(--danger)', padding: '4px 12px', minHeight: 32 }}
-                    onClick={() => deleteParameter(p.key)}
-                  >
-                    删除
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 16 }}>
-            <h3>添加参数</h3>
-            <div className="stack" style={{ gap: 8 }}>
-              <input className="field" placeholder="参数键名" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
-              <input className="field" placeholder="参数值" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
-              <input className="field" placeholder="描述（选填）" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
-              <button className="button" onClick={addParameter} disabled={loading}>
-                {loading ? '添加中...' : '添加参数'}
-              </button>
+                ))
+              )}
             </div>
-          </div>
 
-          {message && <p className="muted">{message}</p>}
-        </section>
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 16 }}>
+              <h3>添加参数</h3>
+              <div className="stack" style={{ gap: 8 }}>
+                <input className="field" placeholder="参数键名" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
+                <input className="field" placeholder="参数值" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
+                <input className="field" placeholder="描述（选填）" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
+                <button className="button" onClick={addParameter} disabled={loading}>
+                  {loading ? '添加中...' : '添加参数'}
+                </button>
+              </div>
+            </div>
+
+            {message && <p className="muted">{message}</p>}
+          </section>
+        ) : (
+          <section className="panel stack" style={{ justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+            <div style={{ fontSize: '3rem', marginBottom: 12 }}>🔒</div>
+            <h2>需要管理员权限</h2>
+            <p className="muted">系统参数管理仅限管理员访问。您当前的权限不足以查看或修改系统配置。</p>
+          </section>
+        )}
 
         {/* 管理菜单 */}
         <section className="panel stack">
