@@ -80,9 +80,9 @@ export default function AdminPage() {
 
   // ---- 系统参数状态 ----
   const [params, setParams] = useState<SystemParameter[]>([]);
-  const [newKey, setNewKey] = useState('');
-  const [newValue, setNewValue] = useState('');
-  const [newDesc, setNewDesc] = useState('');
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState('');
+  const [editingError, setEditingError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -93,6 +93,8 @@ export default function AdminPage() {
   const [questionsLoading, setQuestionsLoading] = useState(false);
   const [showAddQuestion, setShowAddQuestion] = useState(false);
   const [newQuestion, setNewQuestion] = useState({ id: '', title: '', type: 'iq' as EvaluationQuestion['type'], dimension: 'iq' as EvaluationQuestion['dimension'], prompt: '', difficulty: 1 });
+  const [questionPage, setQuestionPage] = useState(0);
+  const QUESTIONS_PER_PAGE = 15;
 
   // ---- 匹配管理状态 ----
   const [matchTasks, setMatchTasks] = useState<AdminMatchTask[]>([]);
@@ -133,38 +135,78 @@ export default function AdminPage() {
     } catch { /* ignore */ }
   }
 
-  async function addParameter() {
-    if (!newKey || !newValue) return;
+  // ========== 系统参数 — 仅允许编辑数值 ==========
+
+  /** 获取参数的数值范围和单位标签 */
+  function getParamMeta(key: string): { min: number; max: number; step: number; unit: string; label: string } {
+    const meta: Record<string, { min: number; max: number; step: number; unit: string; label: string }> = {
+      'eval.iq_threshold': { min: 0, max: 100, step: 1, unit: '分', label: 'IQ 合格阈值' },
+      'eval.eq_threshold': { min: 0, max: 100, step: 1, unit: '分', label: 'EQ 合格阈值' },
+      'eval.max_questions': { min: 5, max: 60, step: 1, unit: '题', label: '单次评估最大题数' },
+      'eval.timeout_seconds': { min: 10, max: 300, step: 5, unit: '秒', label: '单题超时时间' },
+      'matching.min_compatibility': { min: 0, max: 100, step: 1, unit: '%', label: '最低兼容度阈值' },
+      'matching.top_n': { min: 1, max: 20, step: 1, unit: '个', label: '推荐候选数量' },
+      'matching.interest_weight': { min: 0, max: 1, step: 0.05, unit: '', label: '兴趣维度权重' },
+      'matching.personality_weight': { min: 0, max: 1, step: 0.05, unit: '', label: '人格维度权重' },
+      'matching.emotion_weight': { min: 0, max: 1, step: 0.05, unit: '', label: '情绪维度权重' },
+      'matching.capability_weight': { min: 0, max: 1, step: 0.05, unit: '', label: '能力维度权重' },
+      'system.max_concurrent_evaluations': { min: 1, max: 50, step: 1, unit: '个', label: '最大并发评估数' },
+    };
+    return meta[key] ?? { min: 0, max: 9999, step: 1, unit: '', label: key };
+  }
+
+  function startEditParam(key: string, currentValue: string) {
+    setEditingKey(key);
+    setEditingValue(currentValue);
+    setEditingError('');
+  }
+
+  function cancelEditParam() {
+    setEditingKey(null);
+    setEditingValue('');
+    setEditingError('');
+  }
+
+  async function saveParam(key: string) {
+    const meta = getParamMeta(key);
+    // 校验：必须为有效数字
+    const num = Number(editingValue);
+    if (editingValue.trim() === '' || isNaN(num)) {
+      setEditingError('请输入有效数字。');
+      return;
+    }
+    // 校验：数值范围
+    if (num < meta.min || num > meta.max) {
+      setEditingError(`值必须在 ${meta.min} 到 ${meta.max} 之间。`);
+      return;
+    }
+    // 校验：小数步长
+    if (meta.step < 1 && (num * 100) % (meta.step * 100) !== 0) {
+      setEditingError(`值必须为 ${meta.step} 的倍数。`);
+      return;
+    }
+
     setLoading(true);
-    setMessage('');
+    setEditingError('');
     try {
       const res = await fetch('/api/system-parameters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: newKey, value: newValue, description: newDesc })
+        body: JSON.stringify({ key, value: String(num) })
       });
       const data = await res.json();
       if (data.ok) {
-        setMessage('参数已添加。');
-        setNewKey(''); setNewValue(''); setNewDesc('');
+        setMessage(`参数 "${key}" 已更新为 ${num}${meta.unit}。`);
+        cancelEditParam();
         await loadParams();
       } else {
-        setMessage(data.error ?? '添加失败。');
+        setEditingError(data.error ?? '保存失败。');
       }
     } catch {
-      setMessage('请求失败。');
+      setEditingError('请求失败。');
     } finally {
       setLoading(false);
     }
-  }
-
-  async function deleteParameter(key: string) {
-    try {
-      const res = await fetch(`/api/system-parameters?key=${encodeURIComponent(key)}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (data.ok) { setMessage(`参数 "${key}" 已删除。`); await loadParams(); }
-      else { setMessage(data.error ?? '删除失败。'); }
-    } catch { setMessage('请求失败。'); }
   }
 
   // ========== 数据加载函数 ==========
@@ -532,7 +574,7 @@ export default function AdminPage() {
 
             {/* 题目列表 */}
             <div style={{ maxHeight: 500, overflowY: 'auto' }}>
-              {questions.slice(0, 20).map((q) => (
+              {questions.slice(questionPage * QUESTIONS_PER_PAGE, (questionPage + 1) * QUESTIONS_PER_PAGE).map((q) => (
                 <div key={q.id} className="panel" style={{
                   padding: '10px 14px', marginBottom: 6,
                   display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12
@@ -560,10 +602,32 @@ export default function AdminPage() {
                   </button>
                 </div>
               ))}
-              {questions.length > 20 && (
-                <p className="muted" style={{ textAlign: 'center' }}>... 还有 {questions.length - 20} 题未显示</p>
-              )}
             </div>
+
+            {/* 分页控制 */}
+            {questions.length > QUESTIONS_PER_PAGE && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 10 }}>
+                <button
+                  className="button-ghost"
+                  disabled={questionPage === 0}
+                  onClick={() => setQuestionPage((p) => p - 1)}
+                  style={{ fontSize: '0.85rem', opacity: questionPage === 0 ? 0.4 : 1 }}
+                >
+                  ◀ 上一页
+                </button>
+                <span className="muted" style={{ fontSize: '0.85rem' }}>
+                  第 {questionPage + 1} / {Math.ceil(questions.length / QUESTIONS_PER_PAGE)} 页 · 共 {questions.length} 题
+                </span>
+                <button
+                  className="button-ghost"
+                  disabled={(questionPage + 1) * QUESTIONS_PER_PAGE >= questions.length}
+                  onClick={() => setQuestionPage((p) => p + 1)}
+                  style={{ fontSize: '0.85rem', opacity: (questionPage + 1) * QUESTIONS_PER_PAGE >= questions.length ? 0.4 : 1 }}
+                >
+                  下一页 ▶
+                </button>
+              </div>
+            )}
           </section>
         </div>
       )}
@@ -719,46 +783,95 @@ export default function AdminPage() {
         <div className="stack" style={{ gap: 24 }}>
           {/* 系统参数管理 */}
           <section className="panel stack">
-            <h2>⚙️ 系统参数配置</h2>
-            <p className="muted">配置评估阈值、匹配权重、报告模板等系统参数。</p>
-
-            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-              {params.length === 0 ? (
-                <p className="muted">暂无系统参数，请在下方添加。</p>
-              ) : (
-                params.map((p) => (
-                  <div key={p.key} className="panel" style={{
-                    padding: '12px 16px', marginBottom: 8,
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                  }}>
-                    <div>
-                      <strong>{p.key}</strong>
-                      <p className="muted" style={{ fontSize: '0.85rem', margin: '2px 0' }}>
-                        值: {String(p.value)} {p.description ? `· ${p.description}` : ''}
-                      </p>
-                    </div>
-                    <button
-                      className="button-ghost"
-                      style={{ color: 'var(--danger)', padding: '4px 12px', minHeight: 32 }}
-                      onClick={() => deleteParameter(p.key)}
-                    >
-                      删除
-                    </button>
-                  </div>
-                ))
-              )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2>⚙️ 系统参数配置</h2>
+                <p className="muted">评估阈值 · 匹配权重 · 系统限制（仅支持编辑数值，共 {params.length} 项）</p>
+              </div>
+              <button className="button-ghost" onClick={loadParams} disabled={loading} style={{ fontSize: '0.8rem' }}>
+                {loading ? '⏳' : '🔄 刷新'}
+              </button>
             </div>
 
-            <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 16 }}>
-              <h3>添加参数</h3>
-              <div className="stack" style={{ gap: 8 }}>
-                <input className="field" placeholder="参数键名 (如 eval.iq_threshold)" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
-                <input className="field" placeholder="参数值" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
-                <input className="field" placeholder="描述（选填）" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
-                <button className="button" onClick={addParameter} disabled={loading}>
-                  {loading ? '添加中...' : '添加参数'}
-                </button>
-              </div>
+            <div style={{ maxHeight: 500, overflowY: 'auto' }}>
+              {params.length === 0 ? (
+                <p className="muted" style={{ textAlign: 'center', padding: 20 }}>暂无系统参数，请联系管理员初始化数据库。</p>
+              ) : (
+                params.map((p) => {
+                  const meta = getParamMeta(p.key);
+                  const isEditing = editingKey === p.key;
+                  return (
+                    <div key={p.key} className="panel" style={{
+                      padding: '12px 16px', marginBottom: 8,
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <strong style={{ fontSize: '0.9rem' }}>{meta.label}</strong>
+                          <code style={{ fontSize: '0.7rem', color: 'var(--muted)', background: 'rgba(255,255,255,0.05)', padding: '1px 6px', borderRadius: 4 }}>{p.key}</code>
+                        </div>
+                        {p.description && (
+                          <p className="muted" style={{ fontSize: '0.78rem', margin: '0 0 4px 0' }}>{p.description}</p>
+                        )}
+                        {isEditing ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                            <input
+                              className="field"
+                              type="number"
+                              min={meta.min}
+                              max={meta.max}
+                              step={meta.step}
+                              value={editingValue}
+                              onChange={(e) => { setEditingValue(e.target.value); setEditingError(''); }}
+                              onKeyDown={(e) => { if (e.key === 'Enter') saveParam(p.key); if (e.key === 'Escape') cancelEditParam(); }}
+                              style={{ width: 120, fontSize: '0.85rem', padding: '6px 10px' }}
+                              autoFocus
+                            />
+                            <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{meta.unit}</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                              ({meta.min}–{meta.max})
+                            </span>
+                          </div>
+                        ) : (
+                          <p style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--accent)', margin: '4px 0 0' }}>
+                            {String(p.value)}{meta.unit ? ` ${meta.unit}` : ''}
+                          </p>
+                        )}
+                        {isEditing && editingError && (
+                          <p style={{ color: 'var(--danger)', fontSize: '0.78rem', margin: '4px 0 0' }}>⚠ {editingError}</p>
+                        )}
+                      </div>
+                      {isEditing ? (
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <button
+                            className="button"
+                            style={{ padding: '6px 14px', fontSize: '0.8rem', minHeight: 32 }}
+                            onClick={() => saveParam(p.key)}
+                            disabled={loading}
+                          >
+                            {loading ? '保存中...' : '✓ 保存'}
+                          </button>
+                          <button
+                            className="button-ghost"
+                            style={{ padding: '6px 10px', fontSize: '0.8rem', minHeight: 32, color: 'var(--muted)' }}
+                            onClick={cancelEditParam}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="button-ghost"
+                          style={{ padding: '6px 14px', fontSize: '0.8rem', minHeight: 32, flexShrink: 0 }}
+                          onClick={() => startEditParam(p.key, String(p.value))}
+                        >
+                          ✏️ 编辑
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </section>
 
