@@ -35,7 +35,7 @@ import {
   type MatchingRadarDimensions
 } from '@/lib/matching';
 import { aiCandidates } from '@/lib/mock-data';
-import { readAiCandidates } from '@/lib/supabase';
+import { readAiCandidates, writeMatchingSession } from '@/lib/supabase';
 import type { QuestionnaireQuestion, MatchingTask, CandidateMatchResult, CandidateAI } from '@/lib/types';
 
 type PagePhase = 'welcome' | 'questionnaire' | 'processing' | 'result';
@@ -158,6 +158,18 @@ export default function MatchingPage() {
         ? `已生成 ${rankedCandidates.length} 个候选 AI 的匹配排序结果。最推荐 ${rankedCandidates[0].candidate.name}，综合兼容度 ${rankedCandidates[0].compatibility}%。`
         : '当前没有可用候选 AI。'
     });
+
+    // 将匹配结果持久化到 Supabase 数据库
+    try {
+      await writeMatchingSession({
+        userId: completed.userId,
+        status: completed.status,
+        profileJson: profile,
+        resultJson: { profile, rankedCandidates, summary: rankedCandidates.length > 0 ? `Best: ${rankedCandidates[0].candidate.name}` : 'No match' }
+      });
+    } catch {
+      // 数据库不可用时不影响用户体验
+    }
 
     setPhase('result');
   }, [task, answers, openAnswer]);
