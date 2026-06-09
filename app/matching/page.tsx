@@ -35,7 +35,7 @@ import {
   type MatchingRadarDimensions
 } from '@/lib/matching';
 import { aiCandidates } from '@/lib/mock-data';
-import { readAiCandidates, writeMatchingSession } from '@/lib/supabase';
+import { readAiCandidates } from '@/lib/supabase';
 import type { QuestionnaireQuestion, MatchingTask, CandidateMatchResult, CandidateAI } from '@/lib/types';
 
 type PagePhase = 'welcome' | 'questionnaire' | 'processing' | 'result';
@@ -159,13 +159,17 @@ export default function MatchingPage() {
         : '当前没有可用候选 AI。'
     });
 
-    // 将匹配结果持久化到 Supabase 数据库
+    // 将匹配结果通过服务端 API 持久化到 Supabase 数据库
     try {
-      await writeMatchingSession({
-        userId: completed.userId,
-        status: completed.status,
-        profileJson: profile,
-        resultJson: { profile, rankedCandidates, summary: rankedCandidates.length > 0 ? `Best: ${rankedCandidates[0].candidate.name}` : 'No match' }
+      await fetch('/api/matching', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'complete',
+          userId: completed.userId,
+          profile,
+          rankedCandidates,
+        })
       });
     } catch {
       // 数据库不可用时不影响用户体验
