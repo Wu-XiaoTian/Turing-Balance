@@ -112,7 +112,7 @@ export default function AdminPage() {
           <p>管理系统参数配置与维护</p>
         </div>
         <div className="stats">
-          <span className="chip">管理员: {session.user.username ?? session.user.email}</span>
+          <span className="chip">用户: {session.user.username ?? session.user.email}</span>
         </div>
       </section>
 
