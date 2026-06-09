@@ -16,14 +16,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { readAuthSession, clearAuthSession, type AuthSessionState } from '@/lib/auth-session';
-import { evaluationQuestions } from '@/lib/mock-data';
-import { aiCandidates } from '@/lib/mock-data';
 import type { SystemParameter, EvaluationQuestion, CandidateAI } from '@/lib/types';
 
 // ========== Tab 定义 ==========
 type AdminTab = 'evaluation' | 'matching' | 'system';
 
-// ========== 模拟评估任务数据 (管理员视角) ==========
+// ========== 评估任务数据类型 (管理员视角) ==========
 interface AdminEvalTask {
   id: string;
   userId: string;
@@ -35,15 +33,7 @@ interface AdminEvalTask {
   createdAt: string;
 }
 
-const MOCK_EVAL_TASKS: AdminEvalTask[] = [
-  { id: 'task-001', userId: 'u1', userName: '张三', type: 'iq_eq', modelId: 'deepseek-v4-pro-260425', status: 'completed', score: { iq: 85, eq: 78, overall: 82 }, createdAt: '2026-05-20T10:30:00Z' },
-  { id: 'task-002', userId: 'u2', userName: '李四', type: 'iq', modelId: 'doubao-seed-2-0-lite-260428', status: 'completed', score: { iq: 72, eq: 0, overall: 72 }, createdAt: '2026-05-21T14:00:00Z' },
-  { id: 'task-003', userId: 'u3', userName: '王五', type: 'eq', modelId: 'glm-4-7-251222', status: 'evaluating', createdAt: '2026-05-22T09:15:00Z' },
-  { id: 'task-004', userId: 'u1', userName: '张三', type: 'iq_eq', modelId: 'deepseek-v3-2-251201', status: 'cancelled', createdAt: '2026-05-23T16:45:00Z' },
-  { id: 'task-005', userId: 'u4', userName: '赵六', type: 'iq_eq', modelId: 'doubao-seed-2-0-code-preview-260215', status: 'completed', score: { iq: 91, eq: 84, overall: 88 }, createdAt: '2026-05-24T11:20:00Z' },
-];
-
-// ========== 模拟匹配任务数据 (管理员视角) ==========
+// ========== 匹配任务数据类型 (管理员视角) ==========
 interface AdminMatchTask {
   id: string;
   userId: string;
@@ -53,12 +43,6 @@ interface AdminMatchTask {
   topScore?: number;
   createdAt: string;
 }
-
-const MOCK_MATCH_TASKS: AdminMatchTask[] = [
-  { id: 'match-001', userId: 'u1', userName: '张三', status: 'completed', topMatch: '小薇 (温柔型)', topScore: 92, createdAt: '2026-05-25T08:00:00Z' },
-  { id: 'match-002', userId: 'u2', userName: '李四', status: 'completed', topMatch: '阿理 (逻辑型)', topScore: 88, createdAt: '2026-05-26T13:30:00Z' },
-  { id: 'match-003', userId: 'u5', userName: '孙七', status: 'matching', createdAt: '2026-05-27T10:00:00Z' },
-];
 
 // ========== 状态中文映射 ==========
 const STATUS_LABELS: Record<string, string> = {
@@ -103,14 +87,18 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
 
   // ---- 评估管理状态 ----
-  const [evalTasks] = useState<AdminEvalTask[]>(MOCK_EVAL_TASKS);
+  const [evalTasks, setEvalTasks] = useState<AdminEvalTask[]>([]);
+  const [evalTasksLoading, setEvalTasksLoading] = useState(false);
   const [questions, setQuestions] = useState<EvaluationQuestion[]>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
   const [showAddQuestion, setShowAddQuestion] = useState(false);
   const [newQuestion, setNewQuestion] = useState({ id: '', title: '', type: 'iq' as EvaluationQuestion['type'], dimension: 'iq' as EvaluationQuestion['dimension'], prompt: '', difficulty: 1 });
 
   // ---- 匹配管理状态 ----
-  const [matchTasks] = useState<AdminMatchTask[]>(MOCK_MATCH_TASKS);
+  const [matchTasks, setMatchTasks] = useState<AdminMatchTask[]>([]);
+  const [matchTasksLoading, setMatchTasksLoading] = useState(false);
   const [candidates, setCandidates] = useState<CandidateAI[]>([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [newCandidate, setNewCandidate] = useState({ id: '', name: '', description: '', personalityTags: '', interestTags: '', emotionTags: '', capabilityScore: '5' });
 
@@ -129,8 +117,10 @@ export default function AdminPage() {
     }
     // 加载数据
     loadParams();
-    setQuestions([...evaluationQuestions]);
-    setCandidates([...aiCandidates]);
+    loadEvalTasks();
+    loadQuestions();
+    loadMatchTasks();
+    loadCandidates();
   }, [router]);
 
   // ========== 系统参数 CRUD ==========
@@ -177,43 +167,159 @@ export default function AdminPage() {
     } catch { setMessage('请求失败。'); }
   }
 
-  // ========== 题库管理 ==========
+  // ========== 数据加载函数 ==========
 
-  function addQuestion() {
+  async function loadEvalTasks() {
+    setEvalTasksLoading(true);
+    try {
+      const res = await fetch('/api/admin/evaluation?action=tasks');
+      const data = await res.json();
+      if (data.ok) setEvalTasks(data.tasks ?? []);
+    } catch { /* ignore */ }
+    finally { setEvalTasksLoading(false); }
+  }
+
+  async function loadQuestions() {
+    setQuestionsLoading(true);
+    try {
+      const res = await fetch('/api/admin/evaluation?action=questions');
+      const data = await res.json();
+      if (data.ok) setQuestions(data.questions ?? []);
+    } catch { /* ignore */ }
+    finally { setQuestionsLoading(false); }
+  }
+
+  async function loadMatchTasks() {
+    setMatchTasksLoading(true);
+    try {
+      const res = await fetch('/api/admin/matching?action=tasks');
+      const data = await res.json();
+      if (data.ok) setMatchTasks(data.tasks ?? []);
+    } catch { /* ignore */ }
+    finally { setMatchTasksLoading(false); }
+  }
+
+  async function loadCandidates() {
+    setCandidatesLoading(true);
+    try {
+      const res = await fetch('/api/admin/matching?action=candidates');
+      const data = await res.json();
+      if (data.ok) setCandidates(data.candidates ?? []);
+    } catch { /* ignore */ }
+    finally { setCandidatesLoading(false); }
+  }
+
+  // ========== 题库管理 (真实 API) ==========
+
+  async function addQuestion() {
     if (!newQuestion.id || !newQuestion.title || !newQuestion.prompt) return;
-    setQuestions((prev) => [...prev, { ...newQuestion } as EvaluationQuestion]);
-    setNewQuestion({ id: '', title: '', type: 'iq', dimension: 'iq', prompt: '', difficulty: 1 });
-    setShowAddQuestion(false);
-    setMessage('题目已添加（本地）。');
+    setLoading(true);
+    setMessage('');
+    try {
+      const res = await fetch('/api/admin/evaluation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'upsert-question', question: { ...newQuestion, sortOrder: questions.length + 1 } })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setMessage('题目已添加到数据库。');
+        setNewQuestion({ id: '', title: '', type: 'iq', dimension: 'iq', prompt: '', difficulty: 1 });
+        setShowAddQuestion(false);
+        await loadQuestions();
+      } else {
+        setMessage(data.error ?? '添加失败。');
+      }
+    } catch {
+      setMessage('请求失败。');
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function deleteQuestion(id: string) {
-    setQuestions((prev) => prev.filter((q) => q.id !== id));
-    setMessage(`题目 "${id}" 已删除（本地）。`);
+  async function deleteQuestion(id: string) {
+    setLoading(true);
+    setMessage('');
+    try {
+      const res = await fetch('/api/admin/evaluation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete-question', taskId: id })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setMessage(`题目 "${id}" 已从数据库删除。`);
+        await loadQuestions();
+      } else {
+        setMessage(data.error ?? '删除失败。');
+      }
+    } catch {
+      setMessage('请求失败。');
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // ========== 候选 AI 管理 ==========
+  // ========== 候选 AI 管理 (真实 API) ==========
 
-  function addCandidate() {
+  async function addCandidate() {
     if (!newCandidate.id || !newCandidate.name || !newCandidate.description) return;
-    const c: CandidateAI = {
-      id: newCandidate.id,
-      name: newCandidate.name,
-      description: newCandidate.description,
-      personalityTags: newCandidate.personalityTags.split(',').map((t) => t.trim()).filter(Boolean),
-      interestTags: newCandidate.interestTags.split(',').map((t) => t.trim()).filter(Boolean),
-      emotionTags: newCandidate.emotionTags.split(',').map((t) => t.trim()).filter(Boolean),
-      capabilityScore: parseInt(newCandidate.capabilityScore) || 5,
-    };
-    setCandidates((prev) => [...prev, c]);
-    setNewCandidate({ id: '', name: '', description: '', personalityTags: '', interestTags: '', emotionTags: '', capabilityScore: '5' });
-    setShowAddCandidate(false);
-    setMessage('候选 AI 已添加（本地）。');
+    setLoading(true);
+    setMessage('');
+    try {
+      const res = await fetch('/api/admin/matching', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'upsert-candidate',
+          candidate: {
+            id: newCandidate.id,
+            name: newCandidate.name,
+            description: newCandidate.description,
+            personalityTags: newCandidate.personalityTags.split(',').map((t) => t.trim()).filter(Boolean),
+            interestTags: newCandidate.interestTags.split(',').map((t) => t.trim()).filter(Boolean),
+            emotionTags: newCandidate.emotionTags.split(',').map((t) => t.trim()).filter(Boolean),
+            capabilityScore: parseInt(newCandidate.capabilityScore) || 5,
+          }
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setMessage('候选 AI 已添加到数据库。');
+        setNewCandidate({ id: '', name: '', description: '', personalityTags: '', interestTags: '', emotionTags: '', capabilityScore: '5' });
+        setShowAddCandidate(false);
+        await loadCandidates();
+      } else {
+        setMessage(data.error ?? '添加失败。');
+      }
+    } catch {
+      setMessage('请求失败。');
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function deleteCandidate(id: string) {
-    setCandidates((prev) => prev.filter((c) => c.id !== id));
-    setMessage(`候选 AI "${id}" 已删除（本地）。`);
+  async function deleteCandidate(id: string) {
+    setLoading(true);
+    setMessage('');
+    try {
+      const res = await fetch('/api/admin/matching', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete-candidate', taskId: id })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setMessage(`候选 AI "${id}" 已从数据库删除。`);
+        await loadCandidates();
+      } else {
+        setMessage(data.error ?? '删除失败。');
+      }
+    } catch {
+      setMessage('请求失败。');
+    } finally {
+      setLoading(false);
+    }
   }
 
   // ========== 权限拦截 ==========
@@ -303,8 +409,21 @@ export default function AdminPage() {
         <div className="stack" style={{ gap: 24 }}>
           {/* 评估任务列表 */}
           <section className="panel stack">
-            <h2>📋 评估任务列表</h2>
-            <p className="muted">查看系统中所有用户的评估任务及状态。</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2>📋 评估任务列表</h2>
+                <p className="muted">查看系统中所有用户的评估任务及状态（来自数据库）。</p>
+              </div>
+              <button className="button-ghost" onClick={loadEvalTasks} disabled={evalTasksLoading} style={{ fontSize: '0.8rem' }}>
+                {evalTasksLoading ? '⏳ 加载中...' : '🔄 刷新'}
+              </button>
+            </div>
+            {evalTasksLoading && evalTasks.length === 0 ? (
+              <p className="muted" style={{ textAlign: 'center', padding: 20 }}>加载评估任务中...</p>
+            ) : evalTasks.length === 0 ? (
+              <p className="muted" style={{ textAlign: 'center', padding: 20 }}>暂无评估任务数据。用户完成评估后任务将显示在这里。</p>
+            ) : (
+            <>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
                 <thead>
@@ -362,6 +481,8 @@ export default function AdminPage() {
               <span className="stat">已完成: {evalTasks.filter((t) => t.status === 'completed').length}</span>
               <span className="stat">进行中: {evalTasks.filter((t) => t.status === 'evaluating').length}</span>
             </div>
+            </>
+            )}
           </section>
 
           {/* 题库管理 */}
@@ -369,11 +490,16 @@ export default function AdminPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2>📚 题库管理</h2>
-                <p className="muted">管理评估题库（共 {questions.length} 题）</p>
+                <p className="muted">管理评估题库（数据库，共 {questions.length} 题）</p>
               </div>
-              <button className="button" style={{ padding: '8px 16px', fontSize: '0.85rem' }} onClick={() => setShowAddQuestion(!showAddQuestion)}>
-                {showAddQuestion ? '取消' : '+ 添加题目'}
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="button-ghost" onClick={loadQuestions} disabled={questionsLoading} style={{ fontSize: '0.8rem' }}>
+                  {questionsLoading ? '⏳' : '🔄'}
+                </button>
+                <button className="button" style={{ padding: '8px 16px', fontSize: '0.85rem' }} onClick={() => setShowAddQuestion(!showAddQuestion)}>
+                  {showAddQuestion ? '取消' : '+ 添加题目'}
+                </button>
+              </div>
             </div>
 
             {/* 添加题目表单 */}
@@ -449,8 +575,21 @@ export default function AdminPage() {
         <div className="stack" style={{ gap: 24 }}>
           {/* 匹配任务列表 */}
           <section className="panel stack">
-            <h2>📋 匹配任务列表</h2>
-            <p className="muted">查看系统中所有用户的匹配任务及结果。</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2>📋 匹配任务列表</h2>
+                <p className="muted">查看系统中所有用户的匹配任务及结果（来自数据库）。</p>
+              </div>
+              <button className="button-ghost" onClick={loadMatchTasks} disabled={matchTasksLoading} style={{ fontSize: '0.8rem' }}>
+                {matchTasksLoading ? '⏳ 加载中...' : '🔄 刷新'}
+              </button>
+            </div>
+            {matchTasksLoading && matchTasks.length === 0 ? (
+              <p className="muted" style={{ textAlign: 'center', padding: 20 }}>加载匹配任务中...</p>
+            ) : matchTasks.length === 0 ? (
+              <p className="muted" style={{ textAlign: 'center', padding: 20 }}>暂无匹配任务数据。用户完成匹配后任务将显示在这里。</p>
+            ) : (
+            <>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
                 <thead>
@@ -503,6 +642,8 @@ export default function AdminPage() {
               <span className="stat">已完成: {matchTasks.filter((t) => t.status === 'completed').length}</span>
               <span className="stat">进行中: {matchTasks.filter((t) => t.status === 'matching' || t.status === 'profiling').length}</span>
             </div>
+            </>
+            )}
           </section>
 
           {/* 候选 AI 管理 */}
@@ -510,11 +651,16 @@ export default function AdminPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2>🤖 候选 AI 管理</h2>
-                <p className="muted">管理华清池 AI 伴侣候选池（共 {candidates.length} 个）</p>
+                <p className="muted">管理华清池 AI 伴侣候选池（数据库，共 {candidates.length} 个）</p>
               </div>
-              <button className="button" style={{ padding: '8px 16px', fontSize: '0.85rem' }} onClick={() => setShowAddCandidate(!showAddCandidate)}>
-                {showAddCandidate ? '取消' : '+ 添加候选AI'}
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="button-ghost" onClick={loadCandidates} disabled={candidatesLoading} style={{ fontSize: '0.8rem' }}>
+                  {candidatesLoading ? '⏳' : '🔄'}
+                </button>
+                <button className="button" style={{ padding: '8px 16px', fontSize: '0.85rem' }} onClick={() => setShowAddCandidate(!showAddCandidate)}>
+                  {showAddCandidate ? '取消' : '+ 添加候选AI'}
+                </button>
+              </div>
             </div>
 
             {/* 添加候选 AI 表单 */}
