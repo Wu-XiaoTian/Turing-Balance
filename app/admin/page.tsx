@@ -32,6 +32,10 @@ export default function AdminPage() {
       router.push('/auth?mode=login');
       return;
     }
+    if (s.user.role !== 'administrator') {
+      router.push('/auth?mode=login');
+      return;
+    }
     loadParams();
   }, [router]);
 
