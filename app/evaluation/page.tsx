@@ -342,7 +342,7 @@ export default function EvaluationPage() {
           {!session ? (
             <div className="panel" style={{ padding: 16 }}>
               <p className="muted">请先登录后再进行评估。</p>
-              <Link className="button" href="/login">去登录</Link>
+              <Link className="button" href="/auth?mode=login">去登录</Link>
             </div>
           ) : (
             <>
