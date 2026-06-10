@@ -49,6 +49,7 @@ export function writeAuthSession(session: AuthSessionState) {
   }
 
   window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  window.dispatchEvent(new Event('turing-auth-changed'));
 }
 
 export function clearAuthSession() {
@@ -57,4 +58,5 @@ export function clearAuthSession() {
   }
 
   window.localStorage.removeItem(SESSION_KEY);
+  window.dispatchEvent(new Event('turing-auth-changed'));
 }
