@@ -25,9 +25,13 @@ export default function NavBar() {
     setSession(readAuthSession());
     setMounted(true);
 
-    const onStorage = () => setSession(readAuthSession());
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    const refresh = () => setSession(readAuthSession());
+    window.addEventListener('storage', refresh);
+    window.addEventListener('turing-auth-changed', refresh);
+    return () => {
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('turing-auth-changed', refresh);
+    };
   }, []);
 
   const handleLogout = () => {
